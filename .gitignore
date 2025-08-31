@@ -8,20 +8,38 @@ venv/
 .venv/
 env/
 
+# Jupyter Notebook checkpoints (if any collaborator uses notebooks)
+.ipynb_checkpoints/
+
 # Data files (raw/processed datasets)
-data/*.csv
-data/*.xlsx
-data/*.json
+data/raw/*
+data/processed/*
+!data/README.md   # keep placeholder
 
 # Results (generated outputs, graphs, reports)
 results/*.png
 results/*.jpg
 results/*.pdf
 results/*.html
+results/*.csv
+!results/README.md  # keep placeholder
 
 # Logs / temporary files
 *.log
 *.tmp
+
+# Model artifacts (pickles, saved models, cache)
+models/*.pkl
+models/*.joblib
+models/*.h5
+models/*.pt
+models/*.onnx
+!models/README.md
+
+# Reports (if auto-generated)
+reports/*.pdf
+reports/*.docx
+reports/*.html
 
 # IDE/editor settings
 .vscode/
