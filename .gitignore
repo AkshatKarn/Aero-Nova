@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Data files (raw/processed datasets)
+data/*.csv
+data/*.xlsx
+data/*.json
+
+# Results (generated outputs, graphs, reports)
+results/*.png
+results/*.jpg
+results/*.pdf
+results/*.html
+
+# Logs / temporary files
+*.log
+*.tmp
+
+# IDE/editor settings
+.vscode/
+.idea/
+
+# OS system files
+.DS_Store
+Thumbs.db
