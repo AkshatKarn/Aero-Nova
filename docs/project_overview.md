@@ -20,6 +20,88 @@ We want to nowcast current air quality and mobility trends for selected cities a
 - Mobility: your chosen public source (to finalize in the next step)
 - Weather (optional but useful): temperature, wind, humidity
 
+##Integrated Parameters for AQI + Mobility Prediction & Scenario Modeling
+1. Temporal & Seasonal Factors
+
+Day of week (weekday vs weekend)
+
+Public holidays & festivals (mobility pattern change)
+
+Season (winter, summer, monsoon → AQI drastically varies)
+
+2. Weather / Meteorological Conditions
+
+Wind speed & direction 🌬
+
+Temperature 🌡 (incl. inversion events)
+
+Humidity 💧
+
+Rainfall ☔
+
+Visibility (fog/smog conditions)
+
+3. Mobility & Transport Parameters
+
+Traffic congestion index 🚦
+
+Vehicle count per hour/day
+
+Vehicle type share (cars, buses, trucks, 2-wheelers, EVs)
+
+Average speed of traffic flow
+
+Public transport usage % vs private vehicle usage %
+
+Fuel type distribution (petrol, diesel, CNG, EV)
+
+4. Emission & Pollution Sources
+
+Industrial activity index (NO₂, SO₂, VOCs, CO₂)
+
+Construction activity intensity 🚧 (dust, PM emissions)
+
+Burning practices 🔥 (crop residue, garbage, firecrackers)
+
+Energy consumption mix (fossil fuels vs renewables)
+
+5. Urban & Geographical Conditions
+
+Population density 👥
+
+Road density / traffic hotspots
+
+Land use distribution (residential, industrial, commercial)
+
+Green cover % 🌳 (parks, urban trees)
+
+Proximity to highways / industrial zones
+
+Topography 🏔 (valleys, flat, coastal areas → pollutant trapping vs dispersion)
+
+6. Policy & Intervention Inputs
+
+Odd-even vehicle rule days
+
+Construction bans (govt-imposed during high AQI days)
+
+Industrial shutdown days
+
+Public campaigns (e.g., car-free days, EV push)
+
+Fuel price shocks (indirect effect on mobility)
+
+7. Health & Socio-economic Impact (Optional, but adds depth)
+
+Respiratory illness/hospital visits (linked to AQI)
+
+Mortality/morbidity estimates from pollution
+
+Productivity loss (school/work absences during bad AQI)
+
+Economic cost of pollution (optional, secondary analysis)
+
+
 ## Folder map
 - `scripts/` Python modules and runnable scripts
 - `data/` raw and interim datasets (ignored by git)
