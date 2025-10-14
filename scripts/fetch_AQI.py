@@ -153,7 +153,7 @@ def fetch_owm_hourly(stations):
 
 
 # ----------------- MAIN -----------------
-if __name__ == "_main_":
+if __name__ == "__main__":
     df_hist = fetch_owm_historical(stations, days=5)
     print(df_hist.head())
     df_hour = fetch_owm_hourly(stations)
