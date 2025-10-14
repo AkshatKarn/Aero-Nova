@@ -9,8 +9,8 @@ VC_API_KEY = "QBTAZGQ6EEZZHXR6P9Q2F9PPR"           # VisualCrossing API Key
 CITIES = {
     "Indore": (22.7196, 75.8577),
     "Bhopal": (23.2599, 77.4126),
-    "Ujjain": (23.1765, 75.7885),
-    "Dewas": (22.9676, 76.0534)
+    "Ujjain": (23.1793, 75.7849),
+    "Dewas": (22.9659, 76.0553)
 }
 
 CSV_FILE = "weather_data_timeseries.csv"
