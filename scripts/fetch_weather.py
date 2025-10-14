@@ -114,5 +114,5 @@ def main():
     else:
         print("⚠ No data fetched.")
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     main()
