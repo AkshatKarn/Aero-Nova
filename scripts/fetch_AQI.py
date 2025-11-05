@@ -1,11 +1,10 @@
-
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import os
 
 # ----------------- CONFIG -----------------
-OWM_API_KEY = "ab1c6a5cd00c250e7f9621ba1ef2ed67"  # OpenWeatherMap API key
+OWM_API_KEY = "ab1c6a5cd00c250e7f9621ba1ef2ed67"
 
 # ----------------- STATIONS (50 Points) -----------------
 stations = {
@@ -68,93 +67,63 @@ stations = {
     "Dewas - Kalani Nagar": (22.97, 76.09),
 }
 
+# ----------------- SAVE FUNCTION -----------------
+def save_csv(df, filename):
+    exists = os.path.exists(filename)
+    df.to_csv(filename, mode="a", header=not exists, index=False)
 
-# ----------------- FUNCTIONS -----------------
-def fetch_owm_historical(stations, days=5):
-    """Fetch OWM air pollution historical data for N days (time series)."""
-    base_url = "http://api.openweathermap.org/data/2.5/air_pollution/history"
-    all_data = []
+# ----------------- FETCH HISTORICAL -----------------
+def fetch_historical(days=5):
+    url = "http://api.openweathermap.org/data/2.5/air_pollution/history"
+    end = int(datetime.utcnow().timestamp())
+    start = end - days * 86400
 
-    end_time = int(datetime.utcnow().timestamp())
-    start_time = int((datetime.utcnow() - timedelta(days=days)).timestamp())
-
+    rows = []
+    
     for station, (lat, lon) in stations.items():
-        params = {"lat": lat, "lon": lon, "start": start_time, "end": end_time, "appid": OWM_API_KEY}
-        print(f"📡 Fetching history for {station} ...")
-        resp = requests.get(base_url, params=params)
-
-        if resp.status_code != 200:
-            print(f"❌ Error {resp.status_code} for {station}: {resp.text}")
+        print(f"Historical → {station}")
+        params = {"lat": lat, "lon": lon, "start": start, "end": end, "appid": OWM_API_KEY}
+        r = requests.get(url, params=params)
+        if r.status_code != 200:
+            print(f"Error {r.status_code} @ {station}")
             continue
 
-        for item in resp.json().get("list", []):
-            ts = datetime.utcfromtimestamp(item["dt"]).strftime("%Y-%m-%d %H:%M:%S")
-            components = item.get("components", {})
-            all_data.append({
-                "Station": station, "Latitude": lat, "Longitude": lon,
-                "Timestamp": ts,
-                "CO": components.get("co"), "NO": components.get("no"), "NO2": components.get("no2"),
-                "O3": components.get("o3"), "SO2": components.get("so2"),
-                "PM2_5": components.get("pm2_5"), "PM10": components.get("pm10"),
-                "NH3": components.get("nh3"),
-                "AQI": item.get("main", {}).get("aqi"),
-                "Source": "OpenWeatherMap-History"
-            })
+        for item in r.json().get("list", []):
+            t = datetime.utcfromtimestamp(item["dt"]).strftime("%Y-%m-%d %H:%M:%S")
+            c = item["components"]
+            rows.append([station, lat, lon, t, *c.values(), item["main"]["aqi"], "Historical"])
 
-    df = pd.DataFrame(all_data)
-    if not df.empty:
-        df.to_csv("owm_timeseries.csv", index=False, encoding="utf-8")
-        print(f"✅ Historical data saved with {len(df)} rows → owm_timeseries.csv")
-    else:
-        print("⚠ No historical data found!")
-    return df
+    cols = ["Station","Lat","Lon","Timestamp","CO","NO","NO2","O3","SO2","PM2_5","PM10","NH3","AQI","Type"]
+    df = pd.DataFrame(rows, columns=cols)
+    save_csv(df, "aqi_historical_data.csv")
+    print(f"✅ Historical saved ({len(df)} rows)")
 
-
-def fetch_owm_hourly(stations):
-    """Fetch last 1 hour AQI data and append to CSV"""
-    base_url = "http://api.openweathermap.org/data/2.5/air_pollution/history"
-    end_time = int(datetime.utcnow().timestamp())
-    start_time = end_time - 3600
-    all_data = []
+# ----------------- FETCH LIVE -----------------
+def fetch_live():
+    url = "http://api.openweathermap.org/data/2.5/air_pollution"
+    
+    rows = []
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
     for station, (lat, lon) in stations.items():
-        params = {"lat": lat, "lon": lon, "start": start_time, "end": end_time, "appid": OWM_API_KEY}
-        print(f"📡 Fetching hourly data for {station} ...")
-        resp = requests.get(base_url, params=params)
-
-        if resp.status_code != 200:
-            print(f"❌ Error {resp.status_code} for {station}: {resp.text}")
+        print(f"Live → {station}")
+        params = {"lat": lat, "lon": lon, "appid": OWM_API_KEY}
+        r = requests.get(url, params=params)
+        if r.status_code != 200:
+            print(f"Error {r.status_code} @ {station}")
             continue
 
-        for item in resp.json().get("list", []):
-            ts = datetime.utcfromtimestamp(item["dt"]).strftime("%Y-%m-%d %H:%M:%S")
-            components = item.get("components", {})
-            all_data.append({
-                "Station": station, "Latitude": lat, "Longitude": lon,
-                "Timestamp": ts,
-                "CO": components.get("co"), "NO": components.get("no"), "NO2": components.get("no2"),
-                "O3": components.get("o3"), "SO2": components.get("so2"),
-                "PM2_5": components.get("pm2_5"), "PM10": components.get("pm10"),
-                "NH3": components.get("nh3"),
-                "AQI": item.get("main", {}).get("aqi"),
-                "Source": "OpenWeatherMap-Hourly"
-            })
+        item = r.json()["list"][0]
+        c = item["components"]
 
-    if all_data:
-        df = pd.DataFrame(all_data)
-        file_exists = os.path.isfile("owm_timeseries.csv")
+        rows.append([station, lat, lon, now, *c.values(), item["main"]["aqi"], "Live"])
+    
+    cols = ["Station","Lat","Lon","Timestamp","CO","NO","NO2","O3","SO2","PM2_5","PM10","NH3","AQI","Type"]
+    df = pd.DataFrame(rows, columns=cols)
+    save_csv(df, "aqi_live_data.csv")
+    print(f"✅ Live saved ({len(df)} rows)")
 
-        df.to_csv("owm_timeseries.csv", mode="a", header=not file_exists, index=False, encoding="utf-8")
-        print(f"✅ Hourly data appended with {len(df)} rows")
-        return df
-    else:
-        print("⚠ No hourly data found!")
-        return pd.DataFrame()
-
-
-# ----------------- MAIN -----------------
+# ----------------- RUN -----------------
 if __name__ == "__main__":
-    df_hist = fetch_owm_historical(stations, days=5)
-    print(df_hist.head())
-    df_hour = fetch_owm_hourly(stations)
-    print(df_hour.head())
+    fetch_historical(days=5)
+    fetch_live()
