@@ -2,8 +2,8 @@ name: Hourly Live Data Scheduler
 
 on:
   schedule:
-    - cron: "0 * * * *"
-  workflow_dispatch:
+    - cron: "0 * * * *"  # runs every hour
+  workflow_dispatch:     # allow manual trigger
 
 jobs:
   run-scheduler:
@@ -14,11 +14,13 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true   # needed for git push
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.14"
+          python-version: "3.11"      # 3.14 does NOT exist
 
       - name: Install dependencies
         run: |
@@ -29,3 +31,10 @@ jobs:
         run: |
           python Pipeline/scheduler_runner.py
 
+      - name: Commit and push new data files
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add data/
+          git commit -m "Hourly auto-update from scheduler" || echo "No changes to commit"
+          git push
