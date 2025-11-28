@@ -1,20 +1,15 @@
 feature,importance
-timestamp,0.6577493
-PM2_5,0.19876713
-PM10,0.07895072
-NO2,0.011080713
-O3,0.010052956
-SO2,0.009330224
-NH3,0.009132839
-CO,0.007773483
-NO,0.004358426
-Pressure (hPa),0.0027172405
-temperature,0.0012825882
-windspeed,0.0009991252
-Wind Direction (°),0.0007051415
-humidity,0.00025466134
-Lat,0.0
-Lon,0.0
-Longitude,0.0
-Latitude,0.0
-Cloudiness (%),0.0
+CO,0.0
+NO,0.0
+NO2,0.0
+O3,0.0
+SO2,0.0
+PM2_5,0.0
+PM10,0.0
+NH3,0.0
+AQI,0.0
+temperature,0.0
+humidity,0.0
+Pressure (hPa),0.0
+windspeed,0.0
+Wind Direction (°),0.0

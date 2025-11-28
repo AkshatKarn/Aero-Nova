@@ -1,0 +1,15 @@
+feature,importance
+CO,0.0
+NO,0.0
+NO2,0.0
+O3,0.0
+SO2,0.0
+PM2_5,0.0
+PM10,0.0
+NH3,0.0
+AQI,0.0
+temperature,0.0
+humidity,0.0
+Pressure (hPa),0.0
+windspeed,0.0
+Wind Direction (°),0.0

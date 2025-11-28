@@ -1,342 +1,329 @@
-# /mnt/data/train_model.py
+#!/usr/bin/env python3
+"""
+train_model.py
+
+Safe, importable training & utility module.
+
+- Helper functions are defined at module level (safe to import).
+- Training & argparse logic is inside main() and guarded by if __name__ == "__main__".
+- Exposes load_pipeline_and_predict(...) for runtime inference imports.
+"""
+
 import os
-import sys
 import json
+import numpy as np
+import pandas as pd
 import joblib
 from datetime import datetime
-import pandas as pd
-import numpy as np
-
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.ensemble import RandomForestRegressor, HistGradientBoostingRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
-# ---------------- CONFIG ----------------
-AQI_PATH = "data/processed/aqi_master.csv"
-WEATHER_PATH = "data/processed/weather_master.csv"
-TRAFFIC_PATH = "data/processed/traffic_master.csv"
-MODEL_DIR = "results/models"
-METRIC_DIR = "results/metrics"
-RANDOM_STATE = 42
-TEST_SIZE = 0.2
-MERGE_TOLERANCE = pd.Timedelta("1h")   # use lower-case 'h'
-RESAMPLE_RULE = "1h"
-# ---------------------------------------
+# -----------------------
+# Defaults
+# -----------------------
+DEFAULT_DATA_DIR = os.path.join(os.getcwd(), "processed")
+DEFAULT_AQI_FILE = "aqi_master.csv"
+DEFAULT_TRAFFIC_FILE = "traffic_master.csv"
+DEFAULT_WEATHER_FILE = "weather_master.csv"
+DEFAULT_OUT_DIR = "saved_models"
+DEFAULT_MODEL_FILENAME = "aqi_pipeline_with_metadata_no_leak.joblib"
 
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(METRIC_DIR, exist_ok=True)
+# -----------------------
+# CPCB-like breakpoints (replace with official tables if desired)
+# -----------------------
+POLLUTANT_BREAKPOINTS = {
+    "PM2.5": [(0.0,30.0,0,50),(30.1,60.0,51,100),(60.1,90.0,101,200),(90.1,120.0,201,300),(120.1,250.0,301,400),(250.1,500.0,401,500)],
+    "PM10":  [(0.0,50.0,0,50),(50.1,100.0,51,100),(100.1,250.0,101,200),(250.1,350.0,201,300),(350.1,430.0,301,400),(430.1,600.0,401,500)],
+    "NO2":   [(0.0,40.0,0,50),(40.1,80.0,51,100),(80.1,180.0,101,200),(180.1,280.0,201,300),(280.1,400.0,301,400),(400.1,1000.0,401,500)],
+    "SO2":   [(0.0,40.0,0,50),(40.1,80.0,51,100),(80.1,380.0,101,200),(380.1,800.0,201,300),(800.1,1600.0,301,400),(1600.1,2000.0,401,500)],
+    "O3":    [(0.0,50.0,0,50),(50.1,100.0,51,100),(100.1,168.0,101,200),(168.1,208.0,201,300),(208.1,748.0,301,400),(748.1,1000.0,401,500)],
+    "CO":    [(0.0,1.0,0,50),(1.1,2.0,51,100),(2.1,10.0,101,200),(10.1,17.0,201,300),(17.1,34.0,301,400),(34.1,50.0,401,500)],
+    "NH3":   [(0.0,200.0,0,50),(200.1,400.0,51,100),(400.1,800.0,101,200),(800.1,1200.0,201,300),(1200.1,1800.0,301,400),(1800.1,4000.0,401,500)],
+}
 
-def load_csv(path):
-    if not os.path.exists(path):
-        print(f"File not found: {path}")
-        return None
+# -----------------------
+# Compatibility helper for OneHotEncoder param names
+# -----------------------
+def make_onehot(**kwargs):
+    """
+    Return a OneHotEncoder instance with compatible argument for both sklearn<=1.3 and sklearn>=1.4.
+    Tries 'sparse_output' first, falls back to 'sparse' if necessary.
+    """
     try:
-        df = pd.read_csv(path, low_memory=False)
-        print(f"Loaded {path} -> shape {df.shape}")
-        return df
-    except Exception as e:
-        raise RuntimeError(f"Failed to read {path}: {e}")
+        return OneHotEncoder(**kwargs, sparse_output=False)
+    except TypeError:
+        # older sklearn expects 'sparse'
+        return OneHotEncoder(**{k if k != "sparse_output" else "sparse": v for k, v in kwargs.items()}, sparse=False)
 
-def find_datetime_col(df):
-    if df is None:
-        return None
-    for c in df.columns:
-        lc = c.lower()
-        if "date" in lc or "time" in lc or "timestamp" in lc:
-            return c
-    for c in df.columns:
-        if c.lower() in ("ts","time","timestamp","datetime"):
-            return c
-    return None
+# -----------------------
+# Utilities
+# -----------------------
+def interpolate_aqi_array(concs, breakpoints):
+    concs = np.array(concs, dtype=float)
+    out = np.full(concs.shape, np.nan, dtype=float)
+    for (c_lo, c_hi, a_lo, a_hi) in breakpoints:
+        mask = (concs >= c_lo) & (concs <= c_hi)
+        if c_hi == c_lo:
+            out[mask] = a_lo
+        else:
+            out[mask] = ((a_hi - a_lo) / (c_hi - c_lo)) * (concs[mask] - c_lo) + a_lo
+    return out
 
-def ensure_timestamp(df, dt_col):
-    if dt_col is None:
-        return df
-    df = df.copy()
-    df['timestamp'] = pd.to_datetime(df[dt_col], errors='coerce')
-    # drop original datetime column if different
-    if dt_col != 'timestamp':
-        df = df.drop(columns=[dt_col], errors='ignore')
-    # drop rows that couldn't parse timestamp (safe because processed files should be clean)
-    df = df.dropna(subset=['timestamp']).reset_index(drop=True)
+def compute_aqi_columns(df, pollutant_breakpoints):
+    cols_lower_map = {c.lower().replace(".", "").replace(" ", ""): c for c in df.columns}
+    aqi_data = {}
+    for pol, bps in pollutant_breakpoints.items():
+        key = pol.lower().replace(".", "").replace(" ", "")
+        found = cols_lower_map.get(key)
+        if found:
+            aqi_vals = interpolate_aqi_array(df[found].fillna(np.nan).values, bps)
+            aqi_data[f"AQI_{pol}"] = aqi_vals
+        else:
+            aqi_data[f"AQI_{pol}"] = np.full(len(df), np.nan)
+    aqi_df = pd.DataFrame(aqi_data, index=df.index)
+    aqi_df["AQI_real"] = aqi_df.max(axis=1, skipna=True)
+    return aqi_df
+
+def load_and_preview(aqi_path, traffic_path, weather_path):
+    if not os.path.exists(aqi_path) or not os.path.exists(traffic_path) or not os.path.exists(weather_path):
+        missing = [p for p in (aqi_path, traffic_path, weather_path) if not os.path.exists(p)]
+        raise FileNotFoundError("Missing files:\n" + "\n".join(missing))
+    aqi = pd.read_csv(aqi_path)
+    traffic = pd.read_csv(traffic_path)
+    weather = pd.read_csv(weather_path)
+    return aqi, traffic, weather
+
+def ensure_timestamp(df):
+    for col in df.columns:
+        if col.lower() in ("timestamp","time","datetime","date") or "time" in col.lower() or "date" in col.lower():
+            try:
+                df[col] = pd.to_datetime(df[col])
+                return df.set_index(col)
+            except Exception:
+                continue
+    first = df.columns[0]
+    df[first] = pd.to_datetime(df[first], errors='coerce')
+    if df[first].isna().all():
+        raise ValueError("No parseable datetime column found.")
+    return df.set_index(first)
+
+def merge_datasets(aqi_df, traffic_df, weather_df, resample_rule="H"):
+    aqi_dt = ensure_timestamp(aqi_df)
+    traffic_dt = ensure_timestamp(traffic_df)
+    weather_dt = ensure_timestamp(weather_df)
+    try:
+        aqi_rs = aqi_dt.resample(resample_rule).mean()
+    except Exception:
+        aqi_rs = aqi_dt
+    try:
+        traffic_rs = traffic_dt.resample(resample_rule).mean()
+    except Exception:
+        traffic_rs = traffic_dt
+    try:
+        weather_rs = weather_dt.resample(resample_rule).mean()
+    except Exception:
+        weather_rs = weather_dt
+    merged = aqi_rs.join([traffic_rs, weather_rs], how="outer")
+    merged = merged.sort_index()
+    return merged
+
+def make_columns_unique(df, sep="_dup"):
+    cols = list(df.columns)
+    seen = {}
+    new_cols = []
+    for c in cols:
+        if c not in seen:
+            seen[c] = 1
+            new_cols.append(c)
+        else:
+            new_name = f"{c}{sep}{seen[c]}"
+            seen[c] += 1
+            while new_name in seen:
+                new_name = f"{c}{sep}{seen[c]}"
+                seen[c] += 1
+            seen[new_name] = 1
+            new_cols.append(new_name)
+    df.columns = new_cols
     return df
 
-def resample_hourly_mean(df):
-    df = df.copy().set_index('timestamp').sort_index()
-    df_hour = df.resample(RESAMPLE_RULE).mean()
-    df_hour = df_hour.reset_index()
-    return df_hour
+def drop_allnull_columns(df):
+    allnull = [c for c in df.columns if df[c].isna().all()]
+    if allnull:
+        return df.drop(columns=allnull), allnull
+    return df, []
 
-# ---------------- Load processed files ----------------
-print("Using processed files (data/processed/*.csv)")
-df_aqi = load_csv(AQI_PATH)
-df_weather = load_csv(WEATHER_PATH)
-df_traffic = load_csv(TRAFFIC_PATH)
+# -----------------------
+# Prepare ML dataset (removes AQI_* features to avoid leakage)
+# -----------------------
+def prepare_ml_dataset(merged_df, pollutant_breakpoints, drop_exact_duplicate_columns=False):
+    aqi_cols_df = compute_aqi_columns(merged_df, pollutant_breakpoints)
+    merged_with_aqi = pd.concat([merged_df.reset_index(drop=True), aqi_cols_df.reset_index(drop=True)], axis=1)
 
-if df_aqi is None:
-    raise FileNotFoundError(f"Missing AQI file: {AQI_PATH}")
-if df_weather is None:
-    raise FileNotFoundError(f"Missing weather file: {WEATHER_PATH}")
-if df_traffic is None:
-    raise FileNotFoundError(f"Missing traffic file: {TRAFFIC_PATH}")
+    # handle duplicate column labels
+    if merged_with_aqi.columns.duplicated().any():
+        if drop_exact_duplicate_columns:
+            merged_with_aqi = merged_with_aqi.loc[:, ~merged_with_aqi.columns.duplicated()]
+        else:
+            merged_with_aqi = make_columns_unique(merged_with_aqi, sep="_dup")
 
-# ---------------- Convert / align timestamps if present ----------------
-dfs = []
-names = []
-for df, name in [(df_aqi, "aqi"), (df_weather, "weather"), (df_traffic, "traffic")]:
-    dt_col = find_datetime_col(df)
-    if dt_col:
-        print(f"Detected datetime column '{dt_col}' in {name}; converting to 'timestamp' and resampling hourly.")
-        df_ts = ensure_timestamp(df, dt_col)
-        try:
-            df_hour = resample_hourly_mean(df_ts)
-            dfs.append(df_hour)
-            names.append(name)
-            print(f"{name} resampled hourly -> shape {df_hour.shape}")
-        except Exception as e:
-            print(f"Resample failed for {name}, using raw timestamped data: {e}")
-            dfs.append(df_ts)
-            names.append(name)
+    if not merged_with_aqi.index.is_unique:
+        merged_with_aqi = merged_with_aqi.reset_index(drop=True)
+
+    merged_with_aqi, _ = drop_allnull_columns(merged_with_aqi)
+
+    merged_with_aqi["AQI_real"] = pd.to_numeric(merged_with_aqi["AQI_real"], errors="coerce")
+    df_ok = merged_with_aqi[~merged_with_aqi["AQI_real"].isna()].copy().reset_index(drop=True)
+
+    numeric_cols = df_ok.select_dtypes(include=[np.number]).columns.tolist()
+    feature_cols = [c for c in numeric_cols if not (str(c).startswith("AQI_") or c == "AQI_real")]
+    categorical_cols = df_ok.select_dtypes(include=["object","category","bool"]).columns.tolist()
+
+    final_feature_cols = feature_cols + categorical_cols
+    return df_ok, final_feature_cols, "AQI_real"
+
+# -----------------------
+# Training pipeline
+# -----------------------
+def build_and_train(df, feature_cols, target_col, save_path, time_split=False, tolerance=10.0):
+    X = df[feature_cols].copy()
+    y = df[target_col].copy()
+
+    if X.shape[0] < 20:
+        raise ValueError(f"Too few rows to train ({X.shape[0]}). Need more data.")
+
+    if time_split:
+        timestamps = pd.to_datetime(df.index.to_series(), errors="coerce")
+        if timestamps.isna().all():
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        else:
+            cutoff = timestamps.quantile(0.8)
+            train_mask = timestamps <= cutoff
+            if train_mask.sum() < 10 or (~train_mask).sum() < 10:
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            else:
+                X_train, X_test = X.loc[train_mask], X.loc[~train_mask]
+                y_train, y_test = y.loc[train_mask], y.loc[~train_mask]
     else:
-        print(f"No datetime detected in {name}; including raw (index-based).")
-        dfs.append(df)
-        names.append(name)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# ---------------- Merge strategy ----------------
-all_have_ts = all(('timestamp' in d.columns) for d in dfs)
-if all_have_ts and len(dfs) >= 2:
-    print("Merging on timestamp using merge_asof (nearest within 1 hour).")
-    for i in range(len(dfs)):
-        dfs[i] = dfs[i].sort_values('timestamp').reset_index(drop=True)
-    df_merged = dfs[0]
-    for other in dfs[1:]:
-        df_merged = pd.merge_asof(df_merged.sort_values('timestamp'),
-                                  other.sort_values('timestamp'),
-                                  on='timestamp',
-                                  direction='nearest',
-                                  tolerance=MERGE_TOLERANCE)
-    print("Merged shape (time-aware):", df_merged.shape)
-else:
-    # fallback: index-wise concat (truncate to minimum length)
-    print("Not all files have timestamp; performing index-wise concat (truncate to min length).")
-    min_len = min(len(d) for d in dfs)
-    dfs_trunc = [d.iloc[:min_len].reset_index(drop=True) for d in dfs]
-    df_merged = pd.concat(dfs_trunc, axis=1)
-    print("Merged shape (index-concat):", df_merged.shape)
+    numeric_feats = X_train.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_feats = X_train.select_dtypes(include=["object","category","bool"]).columns.tolist()
 
-# ---------------- Identify target column (AQI) ----------------
-TARGET_CANDIDATES = ["AQI", "aqi", "aqi_value", "AirQualityIndex", "AQI_Value", "aqi_val"]
-target_col = None
-for t in TARGET_CANDIDATES:
-    if t in df_merged.columns:
-        target_col = t
-        break
-if target_col is None:
-    for c in df_merged.columns:
-        if "aqi" in c.lower():
-            target_col = c
-            break
-if target_col is None:
-    print("Merged columns:", df_merged.columns.tolist())
-    raise KeyError("AQI target column not found in merged data. Ensure processed AQI file contains an AQI column.")
+    numeric_pipeline = Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())])
+    if categorical_feats:
+        categorical_pipeline = Pipeline([("imputer", SimpleImputer(strategy="most_frequent")), ("ohe", make_onehot(handle_unknown="ignore"))])
+        preprocessor = ColumnTransformer([("num", numeric_pipeline, numeric_feats), ("cat", categorical_pipeline, categorical_feats)], remainder="drop")
+    else:
+        preprocessor = ColumnTransformer([("num", numeric_pipeline, numeric_feats)], remainder="drop")
 
-print("Using target column:", target_col)
+    models = {
+        "RandomForest": RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1),
+        "HGB": HistGradientBoostingRegressor(random_state=42)
+    }
 
-# drop rows with missing target
-missing_target = int(df_merged[target_col].isna().sum())
-if missing_target:
-    print(f"Dropping {missing_target} rows with missing target ({target_col}).")
-    df_merged = df_merged.dropna(subset=[target_col]).reset_index(drop=True)
+    trained_models = {}
+    for name, model in models.items():
+        pipe = Pipeline([("preprocessor", preprocessor), ("model", model)])
+        pipe.fit(X_train, y_train)
+        preds = pipe.predict(X_test)
+        r2 = r2_score(y_test, preds)
+        mse = mean_squared_error(y_test, preds)
+        rmse = mse ** 0.5
+        mae = mean_absolute_error(y_test, preds)
+        within_tol = np.mean(np.abs(preds - y_test) <= tolerance) * 100.0
+        trained_models[name] = {"pipeline": pipe, "metrics": {"r2": r2, "rmse": rmse, "mae": mae, "within_tol_pct": within_tol}}
 
-# ---------------- Prepare features ----------------
-X = df_merged.drop(columns=[target_col]).copy()
-y = df_merged[target_col].copy()
+    best_name = max(trained_models.keys(), key=lambda k: (trained_models[k]["metrics"]["within_tol_pct"], trained_models[k]["metrics"]["r2"]))
+    best_pipeline = trained_models[best_name]["pipeline"]
 
-# Coerce object columns to numeric where possible (handle commas)
-for c in X.columns:
-    if X[c].dtype == object:
-        try:
-            X[c] = pd.to_numeric(X[c].astype(str).str.replace(',',''), errors='coerce')
-        except Exception:
-            X[c] = pd.to_numeric(X[c], errors='coerce')
+    saved_obj = {
+        "pipeline": best_pipeline,
+        "feature_names": feature_cols,
+        "numeric_features": numeric_feats,
+        "categorical_features": categorical_feats,
+        "pollutant_breakpoints": POLLUTANT_BREAKPOINTS,
+        "training_metrics": trained_models[best_name]["metrics"],
+        "model_name": best_name
+    }
+    joblib.dump(saved_obj, save_path)
+    return save_path, trained_models
 
-# Convert timestamp -> epoch seconds for numeric model input (if present)
-if 'timestamp' in X.columns:
-    try:
-        X['timestamp'] = pd.to_datetime(X['timestamp'], errors='coerce').astype('int64') // 10**9
-    except Exception:
-        pass
+# -----------------------
+# Exported helper for inference
+# -----------------------
+def load_pipeline_and_predict(model_file, df_new):
+    """
+    Safe helper for inference. Loads saved joblib object (the structure saved by build_and_train)
+    and returns predictions for df_new (DataFrame).
+    """
+    saved = joblib.load(model_file)
+    pipeline = saved["pipeline"]
+    feature_names = saved["feature_names"]
+    pollutant_breakpoints = saved.get("pollutant_breakpoints", POLLUTANT_BREAKPOINTS)
 
-# ---------------- DROP ALL-NaN & NON-NUMERIC COLUMNS (important) ----------------
-# Drop columns where all values are NaN (imputer would skip them and cause shape mismatch)
-all_nan_cols = [c for c in X.columns if X[c].isna().all()]
-if all_nan_cols:
-    print("Dropping columns that are ALL NaN:", all_nan_cols)
-    X = X.drop(columns=all_nan_cols)
+    # compute AQI columns if pollutant data present (not used in training features but kept for convenience)
+    aqi_cols = compute_aqi_columns(df_new, pollutant_breakpoints)
+    df_combined = pd.concat([df_new.reset_index(drop=True), aqi_cols.reset_index(drop=True)], axis=1)
 
-# Drop remaining non-numeric columns (booleans are allowed)
-non_numeric = [c for c in X.columns if not pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c])]
-if non_numeric:
-    print("Dropping non-numeric columns (could not coerce):", non_numeric)
-    X = X.drop(columns=non_numeric)
+    for col in feature_names:
+        if col not in df_combined.columns:
+            df_combined[col] = np.nan
 
-# Show NaNs before imputation
-nan_counts = X.isna().sum()
-nan_counts = nan_counts[nan_counts > 0].sort_values(ascending=False)
-if len(nan_counts):
-    print("NaN counts in features before imputation:")
-    print(nan_counts.to_string())
-else:
-    print("No NaNs in features before imputation.")
+    X_new = df_combined[feature_names].copy()
+    for c in X_new.columns:
+        X_new[c] = pd.to_numeric(X_new[c], errors="ignore")
 
-# ---------------- Impute numeric NaNs with median (SimpleImputer) ----------------
-imp = SimpleImputer(strategy="median")
-X_values = imp.fit_transform(X)    # numpy array shape = (n_rows, n_final_columns)
-# Rebuild DataFrame using the current X.columns (these columns were not dropped above)
-X = pd.DataFrame(X_values, columns=list(X.columns), index=X.index)
+    preds = pipeline.predict(X_new)
+    return preds
 
-# Final check
-if X.isna().any().any():
-    print("Warning: NaNs remain after imputation; dropping rows with NaNs.")
-    df_comb = pd.concat([X, y.reset_index(drop=True)], axis=1)
-    df_comb = df_comb.dropna(axis=0)
-    # Re-assign X and y after dropping
-    y = df_comb[target_col]
-    X = df_comb.drop(columns=[target_col])
+# -----------------------
+# Main entrypoint (guarded)
+# -----------------------
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Train AQI model and save pipeline")
+    parser.add_argument("--data_dir", default=DEFAULT_DATA_DIR, help="Folder containing aqi_master.csv, traffic_master.csv, weather_master.csv")
+    parser.add_argument("--aqi", default=DEFAULT_AQI_FILE)
+    parser.add_argument("--traffic", default=DEFAULT_TRAFFIC_FILE)
+    parser.add_argument("--weather", default=DEFAULT_WEATHER_FILE)
+    parser.add_argument("--out_dir", default=DEFAULT_OUT_DIR)
+    parser.add_argument("--model_name", default=DEFAULT_MODEL_FILENAME)
+    parser.add_argument("--drop_exact_duplicate_columns", action="store_true")
+    parser.add_argument("--time_split", action="store_true")
+    parser.add_argument("--tolerance", type=float, default=10.0)
+    args = parser.parse_args()
 
-print("Final feature matrix shape:", X.shape)
+    DATA_DIR = args.data_dir
+    AQI_CSV = os.path.join(DATA_DIR, args.aqi)
+    TRAFFIC_CSV = os.path.join(DATA_DIR, args.traffic)
+    WEATHER_CSV = os.path.join(DATA_DIR, args.weather)
+    MODEL_SAVE_DIR = args.out_dir
+    os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
+    SAVE_PATH = os.path.join(MODEL_SAVE_DIR, args.model_name)
 
-if X.shape[1] == 0:
-    raise ValueError("No numeric features available after preprocessing. Check processed CSVs.")
+    print("Loading files from:", DATA_DIR)
+    aqi, traffic, weather = load_and_preview(AQI_CSV, TRAFFIC_CSV, WEATHER_CSV)
 
-# ---------------- Train/test split ----------------
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE)
-print("Train shape:", X_train.shape, "Test shape:", X_test.shape)
+    print("Merging datasets (hourly)...")
+    merged = merge_datasets(aqi, traffic, weather, resample_rule="H")
 
-# ---------------- Linear Regression ----------------
-print("\nTraining LinearRegression (baseline)...")
-lin_reg = LinearRegression()
-lin_reg.fit(X_train, y_train)
-lin_pred = lin_reg.predict(X_test)
-lin_rmse = np.sqrt(mean_squared_error(y_test, lin_pred))
-lin_r2 = r2_score(y_test, lin_pred)
-print(f"LinearRegression -> RMSE: {lin_rmse:.4f}, R2: {lin_r2:.4f}")
+    print("Preparing ML dataset (computing AQI_real and removing leakage)...")
+    df_ok, feature_cols, target_col = prepare_ml_dataset(merged, POLLUTANT_BREAKPOINTS, drop_exact_duplicate_columns=args.drop_exact_duplicate_columns)
 
-# ---------------- XGBoost (optional) ----------------
-xgb_model = None
-xgb_rmse = None
-xgb_r2 = None
-try:
-    from xgboost import XGBRegressor
-    print("\nTraining XGBoost...")
-    xgb_model = XGBRegressor(
-        n_estimators=500,
-        learning_rate=0.05,
-        max_depth=6,
-        subsample=0.9,
-        colsample_bytree=0.9,
-        random_state=RANDOM_STATE,
-        verbosity=0
-    )
-    xgb_model.fit(X_train, y_train)
-    xgb_pred = xgb_model.predict(X_test)
-    xgb_rmse = np.sqrt(mean_squared_error(y_test, xgb_pred))
-    xgb_r2 = r2_score(y_test, xgb_pred)
-    print(f"XGBoost -> RMSE: {xgb_rmse:.4f}, R2: {xgb_r2:.4f}")
-except Exception as e:
-    print("XGBoost not trained (missing or failed):", e)
-    xgb_model = None
+    print(f"Training rows: {df_ok.shape[0]}, Features: {len(feature_cols)}")
+    if df_ok.shape[0] < 30:
+        print("Warning: very few training rows; model may not generalize well.")
 
-# ---------------- SHAP or fallback importance ----------------
-feature_importance_df = None
-explainer = None
-if xgb_model is not None:
-    try:
-        import shap
-        print("\nComputing SHAP values for feature importances...")
-        explainer = shap.TreeExplainer(xgb_model)
-        shap_values = explainer.shap_values(X_test)
-        mean_abs = np.mean(np.abs(shap_values), axis=0)
-        feature_importance_df = pd.DataFrame({"feature": X.columns, "importance": mean_abs}).sort_values("importance", ascending=False).reset_index(drop=True)
-        print("Top features (SHAP):\n", feature_importance_df.head(10).to_string(index=False))
-    except Exception as e:
-        print("SHAP not available or failed:", e)
+    print("Training models (this may take some time)...")
+    model_file, trained_models = build_and_train(df_ok, feature_cols, target_col, SAVE_PATH, time_split=args.time_split, tolerance=args.tolerance)
 
-if feature_importance_df is None:
-    try:
-        coeffs = np.abs(lin_reg.coef_)
-        feature_importance_df = pd.DataFrame({"feature": X.columns, "importance": coeffs}).sort_values("importance", ascending=False).reset_index(drop=True)
-        print("Top features (Linear coef fallback):\n", feature_importance_df.head(10).to_string(index=False))
-    except Exception as e:
-        print("Could not compute fallback feature importances:", e)
-        feature_importance_df = None
+    print("Saved model to:", model_file)
+    print("Training metrics (best):", trained_models[max(trained_models.keys(), key=lambda k: trained_models[k]["metrics"]["within_tol_pct"])]["metrics"])
 
-# ---------------- Save artifacts ----------------
-ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-
-def save_obj(obj, path):
-    try:
-        joblib.dump(obj, path)
-        print("Saved:", path)
-    except Exception as e:
-        print("Failed saving", path, ":", e)
-
-# save linear model
-save_obj(lin_reg, os.path.join(MODEL_DIR, f"linear_model_{ts}.joblib"))
-save_obj(lin_reg, os.path.join(MODEL_DIR, "linear_model_latest.joblib"))
-
-# save xgb model if trained
-if xgb_model is not None:
-    save_obj(xgb_model, os.path.join(MODEL_DIR, f"xgb_model_{ts}.joblib"))
-    save_obj(xgb_model, os.path.join(MODEL_DIR, "xgb_model_latest.joblib"))
-
-# save explainer if created
-if explainer is not None:
-    try:
-        save_obj(explainer, os.path.join(MODEL_DIR, f"explainer_{ts}.joblib"))
-        save_obj(explainer, os.path.join(MODEL_DIR, "explainer_latest.joblib"))
-    except Exception as e:
-        print("Warning: saving explainer failed (pickling):", e)
-
-# save feature importance CSV
-if feature_importance_df is not None:
-    fi_path = os.path.join(MODEL_DIR, f"feature_importance_{ts}.csv")
-    feature_importance_df.to_csv(fi_path, index=False)
-    feature_importance_df.to_csv(os.path.join(MODEL_DIR, "feature_importance_latest.csv"), index=False)
-    print("Saved feature importance:", fi_path)
-
-# --- SAVE TRUE FEATURE LIST USED IN TRAINING (NEW) ---
-feature_list_path = os.path.join(MODEL_DIR, "features_latest.json")
-try:
-    with open(feature_list_path, "w") as f:
-        json.dump(list(X.columns), f)
-    print("Saved training feature list:", feature_list_path)
-except Exception as e:
-    print("Failed saving feature list:", e)
-
-# save metrics
-metrics = {
-    "data_used": {
-        "aqi": AQI_PATH,
-        "weather": WEATHER_PATH,
-        "traffic": TRAFFIC_PATH
-    },
-    "n_rows_merged": int(df_merged.shape[0]) if 'df_merged' in globals() else int(X.shape[0]),
-    "n_features": int(X.shape[1]),
-    "linear": {"rmse": float(lin_rmse), "r2": float(lin_r2)},
-    "xgboost": {"rmse": float(xgb_rmse) if xgb_rmse is not None else None,
-                "r2": float(xgb_r2) if xgb_r2 is not None else None},
-    "timestamp": ts
-}
-metrics_path = os.path.join(METRIC_DIR, f"metrics_{ts}.json")
-with open(metrics_path, "w") as f:
-    json.dump(metrics, f, indent=2)
-with open(os.path.join(METRIC_DIR, "metrics_latest.json"), "w") as f:
-    json.dump(metrics, f, indent=2)
-
-print("\nTraining complete.")
-print("Models saved in:", MODEL_DIR)
-print("Metrics saved in:", METRIC_DIR)
-if feature_importance_df is not None:
-    print("Top 5 features:\n", feature_importance_df.head(5).to_string(index=False))
+if __name__ == "__main__":
+    main()

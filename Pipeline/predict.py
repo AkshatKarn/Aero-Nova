@@ -1,201 +1,276 @@
-# /mnt/data/predict.py
-import os
-import argparse
-import json as _json
+# predict.py (updated - auto-mapping feature names)
 import joblib
 import pandas as pd
 import numpy as np
+import os
+from typing import Tuple, List, Optional
 
-MODEL_DIR = "results/models"
-PROCESSED_DIR = "data/processed"
+MODEL_PATH = r"saved_models/combined_master.joblib"
+SAVED_MODELS_DIR = os.path.dirname(MODEL_PATH)
 
-# Use the features JSON saved from training (preferred). Keep CSV fallback for compatibility.
-FEATURE_FILE_JSON = os.path.join(MODEL_DIR, "features_latest.json")
-FEATURE_FILE_CSV = os.path.join(MODEL_DIR, "feature_importance_latest.csv")
-XGB_FILE = os.path.join(MODEL_DIR, "xgb_model_latest.joblib")
-LIN_FILE = os.path.join(MODEL_DIR, "linear_model_latest.joblib")
-EXPLAINER_FILE = os.path.join(MODEL_DIR, "explainer_latest.joblib")
+def normalize_col(name: str) -> str:
+    if pd.isna(name):
+        return ""
+    s = str(name).strip().lower()
+    s = s.replace(".", "_").replace("-", "_").replace(" ", "_")
+    s = s.replace("__", "_")
+    return s
 
+def find_model_file_in_folder(folder: str) -> Optional[str]:
+    if not os.path.isdir(folder):
+        return None
+    candidates = []
+    for fname in os.listdir(folder):
+        path = os.path.join(folder, fname)
+        if not os.path.isfile(path):
+            continue
+        ln = fname.lower()
+        if not (ln.endswith(".joblib") or ln.endswith(".pkl")):
+            continue
+        # ignore master data joblibs
+        if ln.endswith("_master.joblib") or ln.endswith("_master.pkl"):
+            continue
+        candidates.append(path)
+    # prefer files with 'pipeline' or 'model' in name
+    for p in candidates:
+        ln = os.path.basename(p).lower()
+        if "pipeline" in ln or "model" in ln or "final" in ln:
+            return p
+    return candidates[0] if candidates else None
 
-# ---------------- LOADERS ----------------
-def load_model():
-    if os.path.exists(XGB_FILE):
-        return joblib.load(XGB_FILE), "xgb"
-    if os.path.exists(LIN_FILE):
-        return joblib.load(LIN_FILE), "linear"
-    raise FileNotFoundError("Model not found. Train model first.")
+def load_model() -> Tuple[object, Optional[List[str]]]:
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"MODEL_PATH does not exist: {MODEL_PATH}")
 
+    saved = joblib.load(MODEL_PATH)
 
-def load_feature_list():
-    # Preferred: load training feature list saved as JSON (guarantees order)
-    if os.path.exists(FEATURE_FILE_JSON):
-        try:
-            with open(FEATURE_FILE_JSON, "r") as f:
-                features = _json.load(f)
-            print("Loaded feature list from JSON:", FEATURE_FILE_JSON)
-            return features
-        except Exception as e:
-            print("Failed to load features JSON:", e)
+    # if dictionary with pipeline/model inside
+    if isinstance(saved, dict):
+        for key in ("pipeline", "model", "estimator", "pipe"):
+            if key in saved:
+                pipeline = saved[key]
+                feature_names = saved.get("feature_names", None)
+                return pipeline, feature_names
+        # maybe values contain estimator
+        for v in saved.values():
+            if hasattr(v, "predict"):
+                pipeline = v
+                feature_names = saved.get("feature_names", None)
+                return pipeline, feature_names
 
-    # Fallback: read feature_importance CSV (may be sorted by importance and thus wrong order)
-    if os.path.exists(FEATURE_FILE_CSV):
-        try:
-            df = pd.read_csv(FEATURE_FILE_CSV)
-            print("Loaded feature list from CSV (fallback):", FEATURE_FILE_CSV)
-            return df["feature"].tolist()
-        except Exception as e:
-            print("Failed to load feature_importance CSV:", e)
-
-    raise FileNotFoundError("No feature list found. Train model to generate 'features_latest.json'.")
-
-
-def compute_medians():
-    paths = [
-        f"{PROCESSED_DIR}/aqi_master.csv",
-        f"{PROCESSED_DIR}/weather_master.csv",
-        f"{PROCESSED_DIR}/traffic_master.csv",
-    ]
-    dfs = []
-    for p in paths:
-        if os.path.exists(p):
-            d = pd.read_csv(p)
-            if "timestamp" in d.columns:
-                d["timestamp"] = pd.to_datetime(d["timestamp"], errors="coerce")
-                d = d.dropna(subset=["timestamp"]).set_index("timestamp").resample("1h").mean().reset_index()
-            dfs.append(d)
-
-    if len(dfs) == 0:
-        return {}
-
-    merged = dfs[0]
-    for other in dfs[1:]:
-        merged = pd.merge_asof(
-            merged.sort_values("timestamp"),
-            other.sort_values("timestamp"),
-            on="timestamp",
-            direction="nearest",
-            tolerance=pd.Timedelta("1h")
-        )
-
-    # numeric-only
-    for c in merged.columns:
-        merged[c] = pd.to_numeric(merged[c], errors="coerce")
-
-    return merged.median(numeric_only=True).to_dict()
-
-
-# ---------------- PREPARE INPUT ----------------
-def prepare_input(df_in, feature_list, medians):
-    df = df_in.copy()
-
-    # Convert strings numbers to numeric
-    for c in df.columns:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    # Convert timestamp
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce").astype("int64") // 10**9
-
-    # Final frame with EXACT columns in EXACT order
-    final = pd.DataFrame(columns=feature_list)
-
-    for col in feature_list:
-        if col in df.columns:
-            final[col] = df[col]
+    # If loaded is a DataFrame -> it's data, not model. Find actual model file in same folder
+    if isinstance(saved, pd.DataFrame):
+        print("[info] Loaded joblib is a DataFrame (data), not a model.")
+        model_file = find_model_file_in_folder(SAVED_MODELS_DIR)
+        if not model_file:
+            raise RuntimeError(
+                f"No model file found in '{SAVED_MODELS_DIR}'.\n"
+                "Place your trained pipeline joblib in that folder and name it e.g. 'pipeline.joblib'."
+            )
+        print(f"[info] Found candidate model file: {model_file}. Loading it...")
+        loaded = joblib.load(model_file)
+        if isinstance(loaded, dict):
+            for key in ("pipeline", "model", "estimator", "pipe"):
+                if key in loaded:
+                    pipeline = loaded[key]
+                    feature_names = loaded.get("feature_names", None)
+                    return pipeline, feature_names
+            # fallback to any estimator inside dict
+            for v in loaded.values():
+                if hasattr(v, "predict"):
+                    pipeline = v
+                    feature_names = loaded.get("feature_names", None)
+                    return pipeline, feature_names
+            raise RuntimeError(f"Could not find estimator inside {model_file}.")
         else:
-            final[col] = medians.get(col, 0)
+            if hasattr(loaded, "predict"):
+                pipeline = loaded
+                feat_names = None
+                if hasattr(pipeline, "feature_names_in_"):
+                    feat_names = list(getattr(pipeline, "feature_names_in_"))
+                return pipeline, feat_names
 
-    # If everything is NaN for a column, fill with median of final (numeric only)
+    # If saved is direct estimator/pipeline
+    if hasattr(saved, "predict"):
+        pipeline = saved
+        feat_names = None
+        if hasattr(pipeline, "feature_names_in_"):
+            feat_names = list(getattr(pipeline, "feature_names_in_"))
+        return pipeline, feat_names
+
+    raise RuntimeError("Unable to load a model/pipeline from provided joblib file(s).")
+
+# -----------------------
+# Helper to map common pollutant inputs to model feature names
+# -----------------------
+COMMON_KEYSETS = {
+    "pm25": {"pm2_5", "pm25", "pm_2_5", "pm2"},
+    "pm10": {"pm10", "pm_10"},
+    "no2":  {"no2", "no_2"},
+    "so2":  {"so2", "so_2"},
+    "o3":   {"o3", "o_3"},
+    "nh3":  {"nh3", "nh_3"},
+}
+
+def build_feature_map(expected_features: List[str]) -> dict:
+    """
+    Given the expected feature names (original model column names), return a mapping:
+      normalized_expected -> original_expected
+    """
+    return { normalize_col(f): f for f in expected_features }
+
+def map_inputs_to_features(feature_map: dict, pm25=None, pm10=None, no2=None):
+    """
+    Attempt to map the three provided pollutant values into whatever features the model expects.
+    Returns a dict of original_feature_name -> value (or np.nan).
+    """
+    mapped = {}
+    # start with NaN for all expected features
+    for norm_f, orig_f in feature_map.items():
+        mapped[orig_f] = np.nan
+
+    # build reverse lookup: check normalized expected features for substrings
+    # For each common pollutant, try to find first matching expected feature
+    provided = {"pm25": pm25, "pm10": pm10, "no2": no2}
+    for pollutant, val in provided.items():
+        if val is None:
+            continue
+        keys_to_match = COMMON_KEYSETS[pollutant]
+        found = False
+        # exact substring match in normalized expected features
+        for norm_f, orig_f in feature_map.items():
+            for k in keys_to_match:
+                if k in norm_f:
+                    mapped[orig_f] = val
+                    found = True
+                    break
+            if found:
+                break
+        # if not found, as fallback try matching by suffix/prefix like contains pollutant letters
+        if not found:
+            for norm_f, orig_f in feature_map.items():
+                if pollutant in norm_f:
+                    mapped[orig_f] = val
+                    found = True
+                    break
+        # final fallback: do nothing here; other code may place values by position
+
+    # If none of the provided values were mapped (very unlikely), place them in first columns
+    all_mapped_values = [v for v in mapped.values() if not pd.isna(v)]
+    if len(all_mapped_values) == 0:
+        ofeatures = list(feature_map.values())
+        if len(ofeatures) >= 1 and pm25 is not None: mapped[ofeatures[0]] = pm25
+        if len(ofeatures) >= 2 and pm10 is not None: mapped[ofeatures[1]] = pm10
+        if len(ofeatures) >= 3 and no2 is not None: mapped[ofeatures[2]] = no2
+
+    return mapped
+
+# -----------------------
+# Predict single row
+# -----------------------
+def predict_single(pm25: float, pm10: float, no2: float):
     try:
-        final = final.fillna(final.median(numeric_only=True))
-    except Exception:
-        final = final.fillna(0)
-
-    return final
-
-
-# ---------------- EXPLAINER ----------------
-def explain(model_type, model, X_row):
-    if hasattr(model, "feature_importances_"):
-        fi = model.feature_importances_
-        df = pd.DataFrame({"feature": X_row.columns, "importance": fi})
-        df = df.sort_values("importance", ascending=False)
-        return df
-    return None
-
-
-# ---------------- MAIN PREDICTION ----------------
-def predict_dataframe(df_input):
-    model, model_type = load_model()
-    features = load_feature_list()
-    medians = compute_medians()
-
-    X_ready = prepare_input(df_input, features, medians)
-
-    # debug: print mismatch info if any
-    incoming = list(X_ready.columns)
-    expected = list(features)
-    missing = [c for c in expected if c not in incoming]
-    extra = [c for c in incoming if c not in expected]
-    if missing or extra:
-        print(f"[DEBUG] expected {len(expected)} features, incoming {len(incoming)}")
-        if missing:
-            print("[DEBUG] MISSING features (should not happen):", missing)
-        if extra:
-            print("[DEBUG] EXTRA features (should not happen):", extra)
-
-    preds = model.predict(X_ready)
-
-    fi = None
-    if len(X_ready) > 0:
-        fi = explain(model_type, model, X_ready.iloc[[0]])
-    else:
-        print("[WARNING] No rows found in input → X_ready is empty.")
-
-
-    return preds, fi
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--file", help="CSV input")
-    parser.add_argument("--json", help="JSON row input")
-    args = parser.parse_args()
-
-    # Load input dataframe from --file OR --json
-    if args.file:
-        # Allow .json input too — but handle single-object JSON correctly
-        if args.file.lower().endswith(".json"):
-            # read file as JSON then convert to DataFrame
-            with open(args.file, "r", encoding="utf-8") as fh:
-                obj = _json.load(fh)
-            if isinstance(obj, list):
-                df = pd.DataFrame(obj)
-            elif isinstance(obj, dict):
-                df = pd.DataFrame([obj])
-            else:
-                # fallback to pandas reader for other formats
-                df = pd.read_json(args.file)
-        else:
-            df = pd.read_csv(args.file)
-
-    elif args.json:
-        # args.json is a JSON string for a single row
-        df = pd.DataFrame([_json.loads(args.json)])
-    else:
-        print("Provide --file or --json")
+        pipeline, feature_names = load_model()
+    except Exception as e:
+        print("[ERROR] loading model:", e)
         return
 
-    preds, fi = predict_dataframe(df)
-    df["predicted_AQI"] = preds
+    # If pipeline exposes feature names
+    if feature_names is None and hasattr(pipeline, "feature_names_in_"):
+        feature_names = list(getattr(pipeline, "feature_names_in_"))
 
-    print("\n----------- RESULT -----------")
-    print(df.to_string(index=False))
+    # If still None, try to infer a minimal feature list
+    if feature_names is None:
+        # create default normalized names
+        feature_names = ["pm2_5", "pm10", "no2"]
 
-    if fi is not None:
-        print("\nTop Feature Importances:")
-        print(fi.head(10).to_string(index=False))
+    # ensure list
+    feature_names = list(feature_names)
 
+    # Build normalized map and then mapped values
+    feature_map = build_feature_map(feature_names)   # normalized -> original
+    mapped_values = map_inputs_to_features(feature_map, pm25=pm25, pm10=pm10, no2=no2)
 
+    # Create single-row DataFrame with original feature column names in correct order
+    row = { orig: mapped_values.get(orig, np.nan) for orig in feature_names }
+
+    # If any feature still missing in row, fill with 0 (or np.nan) - choose 0 for numerical stability
+    for k in row:
+        if pd.isna(row[k]):
+            row[k] = 0.0
+
+    X = pd.DataFrame([row], columns=feature_names)
+    try:
+        pred = pipeline.predict(X)[0]
+        print("Predicted AQI:", pred)
+        return pred
+    except Exception as e:
+        print("[ERROR] pipeline prediction failed:", e)
+        return
+
+# -----------------------
+# Predict from CSV (keeps earlier behavior but improved mapping)
+# -----------------------
+def predict_from_csv(csv_path: str, out_path: Optional[str] = None):
+    try:
+        pipeline, feature_names = load_model()
+    except Exception as e:
+        print("[ERROR] loading model:", e)
+        return
+
+    df = pd.read_csv(csv_path)
+    # keep original columns saved for output
+    orig_cols = df.columns.tolist()
+    # normalize df cols
+    df.columns = [normalize_col(c) for c in orig_cols]
+
+    # determine feature names
+    if feature_names is None and hasattr(pipeline, "feature_names_in_"):
+        feature_names = list(getattr(pipeline, "feature_names_in_"))
+    if feature_names is None:
+        # fallback: use all df columns as features
+        feature_names = df.columns.tolist()
+
+    # Build normalized feature map
+    feature_map = build_feature_map(feature_names)  # normalized -> original
+
+    # Ensure df contains normalized columns for all expected features
+    # If not present, create with NaN
+    for norm_f, orig_f in feature_map.items():
+        if norm_f not in df.columns:
+            df[norm_f] = np.nan
+
+    # Reorder columns to pipeline expected (normalized form)
+    norm_feature_order = [normalize_col(fn) for fn in feature_names]
+    X = df[norm_feature_order]
+
+    # Predict
+    try:
+        preds = pipeline.predict(X)
+    except Exception as e:
+        print("[ERROR] pipeline prediction failed:", e)
+        return
+
+    # attach predicted column and restore original column names for output
+    result = df.copy()
+    result["predicted_AQI"] = preds
+    # rename cols back to original input names
+    rename_map = {normalize_col(o): o for o in orig_cols}
+    result = result.rename(columns=rename_map)
+
+    if out_path:
+        result.to_csv(out_path, index=False)
+        print(f"Prediction saved to: {out_path}")
+    else:
+        print(result.head())
+    return result
+
+# -----------------------
+# If run as script
+# -----------------------
 if __name__ == "__main__":
-    main()
+    # example direct predict
+    try:
+        predict_single(100, 150, 60)
+    except Exception as e:
+        print("[ERROR] predict_single failed:", e)

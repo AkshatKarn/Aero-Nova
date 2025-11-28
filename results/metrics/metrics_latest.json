@@ -1,18 +1,13 @@
 {
-  "data_used": {
-    "aqi": "data/processed/aqi_master.csv",
-    "weather": "data/processed/weather_master.csv",
-    "traffic": "data/processed/traffic_master.csv"
-  },
   "n_rows_merged": 240,
-  "n_features": 19,
+  "n_features": 15,
   "linear": {
-    "rmse": 0.12481134469469027,
-    "r2": 0.9807462216192319
+    "rmse": 0.12486369552555056,
+    "r2": 0.9807300666345181
   },
   "xgboost": {
-    "rmse": 0.1088273118606482,
-    "r2": 0.9853619357931493
+    "rmse": 0.11333233377772778,
+    "r2": 0.9841249351474358
   },
-  "timestamp": "20251124T180758Z"
+  "timestamp": "20251125T152125Z"
 }

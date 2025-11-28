@@ -1,0 +1,18 @@
+{
+  "data_used": {
+    "aqi": "data/processed/aqi_master.csv",
+    "weather": "data/processed/weather_master.csv",
+    "traffic": "data/processed/traffic_master.csv"
+  },
+  "n_rows_merged": 375,
+  "n_features": 14,
+  "linear": {
+    "rmse": 0.0,
+    "r2": 1.0
+  },
+  "xgboost": {
+    "rmse": 0.0,
+    "r2": 1.0
+  },
+  "timestamp": "20251125T120359Z"
+}
