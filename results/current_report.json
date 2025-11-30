@@ -1,0 +1,47 @@
+{
+  "timestamp": "2025-11-29T03:39:10.407376Z",
+  "aqi": 161,
+  "category": "Moderate",
+  "pollutant_values_last": {
+    "PM2.5": 120.95,
+    "PM10": 127.39,
+    "NO2": 1.95,
+    "SO2": 14.2,
+    "O3_used_\u00b5g/m3": 141.77,
+    "NH3": 0.0
+  },
+  "subindices": {
+    "PM2.5": null,
+    "PM10": 118.53,
+    "NO2": 1.95,
+    "SO2": 14.2,
+    "O3": 161.24,
+    "NH3": 0.0
+  },
+  "dominant": "O3",
+  "o3_diag": {
+    "raw": 141.77,
+    "used": 141.77,
+    "method": "8hr_rolling",
+    "column": "o3"
+  },
+  "weather_snapshot": {
+    "wind": 2.49,
+    "humidity": 49.0,
+    "precip": null,
+    "visibility": 10000.0
+  },
+  "traffic_snapshot": {
+    "vehicle_count": null,
+    "avg_speed": null
+  },
+  "reasons": [
+    "Dominant pollutant: O3 (subindex 161.24).",
+    "O3 diagnostic: raw_last=141.77 \u00b5g/m3  used_for_aqi=141.77 \u00b5g/m3  method=8hr_rolling  col=o3",
+    "Light wind (2.49 m/s) \u2014 limited dispersion.",
+    "Traffic data not available in live feed."
+  ],
+  "suggestions": [
+    "Monitor updates; reduce exposure if sensitive."
+  ]
+}
