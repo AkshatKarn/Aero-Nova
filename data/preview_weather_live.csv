@@ -1,4 +1,4 @@
-City,Latitude,Longitude,Timestamp,Temperature (°C),Humidity (%),Pressure (hPa),Wind Speed (m/s),Wind Direction (°),Cloudiness (%),Visibility (m),Source
+City,Latitude,Longitude,Timestamp,Temperature,Humidity,Pressure,Wind_Speed,Wind_Direction,Cloudiness,Visibility,Source
 Indore,22.7196,75.8577,2025-11-28 22:24:36,16.44,52,1015,2.73,68,4,10000,OpenWeather
 Bhopal,23.2599,77.4126,2025-11-28 22:24:36,15.04,41,1016,2.1,48,1,10000,OpenWeather
 Indore,22.7196,75.8577,2025-11-28 22:23:18,16.44,52,1015,2.73,68,4,10000,OpenWeather

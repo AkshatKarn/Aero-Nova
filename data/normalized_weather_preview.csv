@@ -1,7 +1,11 @@
-City,Latitude,Longitude,Timestamp,Temperature (°C),Humidity (%),Pressure (hPa),Wind Speed (m/s),Wind Direction (°),Cloudiness (%),Visibility (m),Source
+City,Latitude,Longitude,Timestamp,Temperature,Humidity,Pressure,Wind_Speed,Wind_Direction,Cloudiness,Visibility,Source
 Indore,22.7196,75.8577,2025-11-28 22:24:36,16.44,52,1015,2.73,68,4,10000,OpenWeather
 Bhopal,23.2599,77.4126,2025-11-28 22:24:36,15.04,41,1016,2.1,48,1,10000,OpenWeather
 Indore,22.7196,75.8577,2025-11-28 22:23:18,16.44,52,1015,2.73,68,4,10000,OpenWeather
 Bhopal,23.2599,77.4126,2025-11-28 22:25:36,15.04,41,1016,2.1,48,1,10000,OpenWeather
 Ujjain,23.1765,75.7885,2025-11-28 22:24:36,17.01,55,1015,2.89,80,3,10000,OpenWeather
 Dewas,22.9676,76.0534,2025-11-28 22:24:36,16.11,51,1015,2.84,78,3,10000,OpenWeather
+Indore,22.7196,75.8577,2025-12-11 18:03:21,13.09,71,1017,0.0,0,0,3000,OpenWeather
+Bhopal,23.2599,77.4126,2025-12-11 18:05:48,13.18,58,1017,0.0,0,0,4000,OpenWeather
+Ujjain,23.1765,75.7885,2025-12-11 18:06:07,17.26,27,1017,1.38,52,0,10000,OpenWeather
+Dewas,22.9676,76.0534,2025-12-11 18:06:08,16.59,29,1017,1.36,56,0,10000,OpenWeather

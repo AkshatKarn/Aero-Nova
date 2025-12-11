@@ -11,7 +11,7 @@ Features:
  - Fixed parsing/display of reasons & suggestions.
  - Connected observed point to forecast (optional) so plot shows line connectivity.
  - Safe handling of st.secrets (won't crash if secrets file missing).
- - Copy this file to project root and run: `streamlit run app.py`.
+ - Copy this file to project root and run: streamlit run app.py.
 
 Before running:
  - (recommended) create .streamlit/secrets.toml with OWM_KEY = "your_key" OR
@@ -73,12 +73,12 @@ OWM_AIR_FORECAST_URL = "https://api.openweathermap.org/data/2.5/air_pollution/fo
 # Optional OpenAQ fallback (v3)
 OPENAQ_URL = "https://api.openaq.org/v3/latest"
 
+# ---------------- LOCATIONS: reduced to 4 as requested ----------------
 LOCATIONS = {
-    "Indore - MG Road": (22.718, 75.847),
-    "Indore - Vijay Nagar": (22.735, 75.88),
-    "Indore - AB Road": (22.726, 75.889),
-    "Indore - Rajwada": (22.7196, 75.855),
-    "Bhopal - MP Nagar": (23.238, 77.4125)
+    "Indore": (22.7180, 75.8470),
+    "Dewas": (22.9667, 75.3333),
+    "Ujjain": (23.1765, 75.7885),
+    "Bhopal - MP Nagar": (23.2380, 77.4125)
 }
 
 # ---------------- AQI breakpoints ----------------
@@ -146,7 +146,7 @@ def parse_list_field(x):
             pass
         # try python literal (safe-ish)
         try:
-            val = eval(s, {"__builtins__": None}, {})
+            val = eval(s, {"_builtins_": None}, {})
             if isinstance(val, (list, tuple)):
                 return [str(i) for i in val]
         except Exception:
@@ -293,7 +293,7 @@ if not OWM_KEY:
 
 left, right = st.columns([2,1])
 with right:
-    st.markdown("**Quick info**")
+    st.markdown("*Quick info*")
     st.write("Priority: local -> OpenWeather -> OpenAQ. External forecast URL optional.")
 with left:
     st.markdown("### Live remote data & current AQI")
@@ -376,10 +376,10 @@ if local_report:
     if aqi_val is not None:
         displayed_aqi = float(aqi_val)
         st.markdown(aqi_card_html(displayed_aqi, "Live AQI (local)"), unsafe_allow_html=True)
-        st.write("**Reasons:**")
+        st.write("*Reasons:*")
         for r in parse_list_field(local_report.get("reasons")):
             st.write("•", r)
-        st.write("**Suggestions:**")
+        st.write("*Suggestions:*")
         for s in parse_list_field(local_report.get("suggestions")):
             st.write("•", s)
     else:

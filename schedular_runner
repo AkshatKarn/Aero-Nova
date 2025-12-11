@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""
+full_fetch_scheduler.py
+Robust full-data fetch scheduler with optional SQLAlchemy integration.
+
+Features:
+ - Calls fetchers (scripts.fetch_AQI.fetch_live, scripts.fetch_weather.run_live_for_duration,
+   scripts.fetch_traffic.simulate_time_series) if present.
+ - Moves produced CSVs into project-root data/
+ - Normalizes AQI / weather / traffic CSVs from data/
+ - Attempts to push to SQL if SQLAlchemy is installed; otherwise skips DB push and writes preview CSVs.
+"""
+
+import sys
+import os
+import time
+import shutil
+from pathlib import Path
+from typing import List
+import pandas as pd
+
+# allow importing local scripts/*
+sys.path.append(".")
+
+# -----------------------------
+# Optional SQLAlchemy import
+# -----------------------------
+try:
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import SQLAlchemyError
+    _HAS_SQLALCHEMY = True
+except Exception as _e:
+    print(f"[WARN] SQLAlchemy not available: {_e}. DB pushes will be skipped.")
+    _HAS_SQLALCHEMY = False
+
+    # provide light dummies to avoid NameError if used by mistake
+    def create_engine(*args, **kwargs):
+        raise RuntimeError("SQLAlchemy not installed. DB operations are disabled.")
+
+    class SQLAlchemyError(Exception):
+        pass
+
+# -----------------------------
+# Try to import fetcher functions (placeholders if missing)
+# -----------------------------
+try:
+    from scripts.fetch_AQI import fetch_live as fetch_aqi_live
+except Exception:
+    def fetch_aqi_live():
+        print("[WARN] fetch_aqi_live not available - placeholder used.")
+
+try:
+    from scripts.fetch_weather import run_live_for_duration
+except Exception:
+    def run_live_for_duration(run_minutes=1, interval_seconds=60):
+        print("[WARN] run_live_for_duration not available - placeholder used.")
+
+try:
+    from scripts.fetch_traffic import simulate_time_series
+except Exception:
+    def simulate_time_series(duration_minutes=1, interval_seconds=60):
+        print("[WARN] simulate_time_series not available - placeholder used.")
+
+# ===========================
+# Discover project root + data dir
+# ===========================
+_this_file = Path(__file__).resolve()
+project_root = None
+for p in _this_file.parents:
+    if (p / ".git").exists() or (p / "scripts").exists() or (p / "preprocessing").exists():
+        project_root = p
+        break
+if project_root is None:
+    project_root = _this_file.parents[1]
+
+ROOT = project_root
+DATA_DIR = ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    print("[WARN] DATABASE_URL not found — using local sqlite test DB path (but only if SQLAlchemy installed).")
+    DATABASE_URL = f"sqlite:///{(ROOT / 'test_local_db.sqlite').as_posix()}"
+
+def get_engine():
+    if not _HAS_SQLALCHEMY:
+        raise RuntimeError("SQLAlchemy not available")
+    return create_engine(DATABASE_URL, pool_pre_ping=True)
+
+# --------------------------------
+# SAFE SQL PUSH (skips when SQLAlchemy missing)
+# --------------------------------
+def push_to_sql(df: pd.DataFrame, table_name: str, expected_cols: List[str]):
+    """
+    Safely push df to SQL table. If SQLAlchemy missing, skip and return 0.
+    """
+    if df is None or df.empty:
+        print(f"[SKIP] No rows to push for {table_name}")
+        return 0
+
+    # ensure expected columns present
+    for c in expected_cols:
+        if c not in df.columns:
+            df[c] = pd.NA
+
+    df_to_push = df[expected_cols].copy()
+
+    if not _HAS_SQLALCHEMY:
+        print(f"[SKIP] SQLAlchemy missing — skipping push to {table_name}. Rows: {len(df_to_push)}")
+        # write a preview CSV so you can inspect
+        preview_path = DATA_DIR / f"preview_{table_name}.csv"
+        try:
+            df_to_push.to_csv(preview_path, index=False)
+            print(f"[INFO] Wrote preview CSV: {preview_path}")
+        except Exception as e:
+            print(f"[WARN] Could not write preview CSV: {e}")
+        return 0
+
+    try:
+        engine = get_engine()
+        df_to_push.to_sql(name=table_name, con=engine, if_exists="append", index=False)
+        print(f"[OK] Pushed {len(df_to_push)} rows to {table_name}")
+        return len(df_to_push)
+    except SQLAlchemyError as e:
+        print(f"[ERROR] SQL insert failed for {table_name}: {e}")
+        return 0
+    except Exception as e:
+        print(f"[ERROR] Unexpected SQL error for {table_name}: {e}")
+        return 0
+
+# --------------------------------
+# NORMALIZATIONS (read from DATA_DIR)
+# --------------------------------
+def normalize_aqi_csv(csv_name: str = "aqi_live_data.csv") -> pd.DataFrame:
+    csv_path = DATA_DIR / csv_name
+    if not csv_path.exists():
+        print(f"[WARN] AQI csv missing: {csv_path}")
+        return pd.DataFrame()
+
+    df = pd.read_csv(csv_path)
+    df = df.rename(columns={
+        "Station": "City",
+        "Lat": "Latitude",
+        "Lon": "Longitude",
+        "PM2_5": "PM25",
+        "PM2.5": "PM25",
+        "O3": "Ozone",
+        "Type": "Source",
+        "timestamp": "Timestamp",
+        "Timestamp": "Timestamp",
+        "AQI": "AQI",
+    })
+
+    expected = ["City", "Latitude", "Longitude", "Timestamp", "AQI", "PM25", "PM10",
+                "CO", "NO2", "SO2", "Ozone", "Source"]
+
+    for c in expected:
+        if c not in df.columns:
+            df[c] = pd.NA
+
+    if "Timestamp" in df.columns:
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+
+    return df[expected]
+
+def normalize_weather_csv(csv_name: str = "live_weather.csv") -> pd.DataFrame:
+    csv_path = DATA_DIR / csv_name
+    if not csv_path.exists():
+        print(f"[WARN] Weather csv missing: {csv_path}")
+        return pd.DataFrame()
+
+    df = pd.read_csv(csv_path)
+    df = df.rename(columns={
+        "Temperature (°C)": "Temperature",
+        "Temperature": "Temperature",
+        "Humidity (%)": "Humidity",
+        "Humidity": "Humidity",
+        "Pressure (hPa)": "Pressure",
+        "Wind Speed (m/s)": "Wind_Speed",
+        "Wind Direction (°)": "Wind_Direction",
+        "Cloudiness (%)": "Cloudiness",
+        "Visibility (m)": "Visibility",
+        "timestamp": "Timestamp",
+        "Timestamp": "Timestamp",
+        "City": "City",
+        "Lat": "Latitude",
+        "Lon": "Longitude",
+        "Source": "Source",
+    })
+
+    expected = ["City", "Latitude", "Longitude", "Timestamp", "Temperature", "Humidity",
+                "Pressure", "Wind_Speed", "Wind_Direction", "Cloudiness", "Visibility", "Source"]
+
+    for c in expected:
+        if c not in df.columns:
+            df[c] = pd.NA
+
+    if "Timestamp" in df.columns:
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+
+    return df[expected]
+
+def normalize_traffic_csv(csv_name: str = "traffic_timeseries.csv") -> pd.DataFrame:
+    csv_path = DATA_DIR / csv_name
+    if not csv_path.exists():
+        print(f"[WARN] Traffic csv missing: {csv_path}")
+        return pd.DataFrame()
+
+    df = pd.read_csv(csv_path)
+
+    # ensure timestamp exists
+    if "timestamp" not in df.columns and "Timestamp" in df.columns:
+        df = df.rename(columns={"Timestamp": "timestamp"})
+    if "timestamp" not in df.columns:
+        for c in df.columns:
+            if "time" in c.lower() or "date" in c.lower():
+                df = df.rename(columns={c: "timestamp"})
+                break
+
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+
+    df = df.rename(columns={
+        "city": "city",
+        "City": "city",
+        "latitude": "latitude",
+        "Latitude": "latitude",
+        "longitude": "longitude",
+        "Longitude": "longitude",
+        "currentSpeed": "currentSpeed",
+        "speed": "currentSpeed",
+        "flow": "currentFlow",
+        "timestamp": "timestamp",
+    })
+
+    expected = [
+        "city", "latitude", "longitude", "timestamp", "currentSpeed", "currentFlow",
+        "vehicleCount", "linkId", "Source"
+    ]
+
+    for c in expected:
+        if c not in df.columns:
+            df[c] = pd.NA
+
+    return df[expected]
+
+# --------------------------------
+# UTIL: move generated files into DATA_DIR
+# --------------------------------
+def move_to_data_if_exists(filenames: List[str]) -> List[str]:
+    moved = []
+    candidates = []
+    for fname in filenames:
+        candidates.append(ROOT / fname)
+        candidates.append(_this_file.parent / fname)
+        candidates.append(Path.cwd() / fname)
+
+    # dedupe while preserving order
+    seen = set()
+    uniq = []
+    for p in candidates:
+        if p not in seen:
+            uniq.append(p)
+            seen.add(p)
+
+    for src in uniq:
+        if src.exists():
+            dst = DATA_DIR / src.name
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+                moved.append(src.name)
+            except Exception as e:
+                print(f"[WARN] Could not move {src} -> {dst}: {e}")
+
+    if moved:
+        print("[INFO] Moved files into data/:", moved)
+    return moved
+
+# --------------------------------
+# MAIN SCHEDULER
+# --------------------------------
+def run_full_fetch():
+    print("\n===============================")
+    print("🚀 FULL SCHEDULER STARTED")
+    print("===============================\n")
+    print(f"Project root: {ROOT}")
+    print(f"Data dir: {DATA_DIR}\n")
+
+    # 1) AQI fetch
+    print("📌 Fetching FULL AQI live dataset...")
+    try:
+        fetch_aqi_live()
+        print("✔ AQI data fetched.")
+    except Exception as e:
+        print(f"[ERROR] fetch_aqi_live failed: {e}")
+
+    # 2) Weather fetch
+    print("📌 Fetching WEATHER live data (run duration)...")
+    try:
+        run_live_for_duration(run_minutes=10, interval_seconds=60)
+        print("✔ Weather data fetched.")
+    except Exception as e:
+        print(f"[ERROR] run_live_for_duration failed: {e}")
+
+    # 3) Traffic fetch
+    print("📌 Fetching TRAFFIC live data (run duration)...")
+    try:
+        simulate_time_series(duration_minutes=10, interval_seconds=60)
+        print("✔ Traffic data fetched.")
+    except Exception as e:
+        print(f"[ERROR] simulate_time_series failed: {e}")
+
+    # allow file writes
+    time.sleep(2)
+
+    # Move outputs to data/
+    produced_files = ["aqi_live_data.csv", "live_weather.csv", "traffic_timeseries.csv"]
+    moved = move_to_data_if_exists(produced_files)
+
+    # list data dir contents
+    print("\n[data folder contents]")
+    for p in sorted(DATA_DIR.glob("*")):
+        print(" -", p.name)
+
+    # Normalize and push (or preview)
+    aqi_df = normalize_aqi_csv("aqi_live_data.csv")
+    if not aqi_df.empty:
+        # write normalized preview regardless
+        try:
+            aqi_df.to_csv(DATA_DIR / "normalized_aqi_preview.csv", index=False)
+            print(f"[INFO] Wrote normalized preview: normalized_aqi_preview.csv")
+        except Exception as e:
+            print(f"[WARN] Could not write normalized_aqi_preview.csv: {e}")
+        push_to_sql(aqi_df, table_name="aqi_live", expected_cols=list(aqi_df.columns))
+
+    weather_df = normalize_weather_csv("live_weather.csv")
+    if not weather_df.empty:
+        try:
+            weather_df.to_csv(DATA_DIR / "normalized_weather_preview.csv", index=False)
+            print(f"[INFO] Wrote normalized preview: normalized_weather_preview.csv")
+        except Exception as e:
+            print(f"[WARN] Could not write normalized_weather_preview.csv: {e}")
+        push_to_sql(weather_df, table_name="weather_live", expected_cols=list(weather_df.columns))
+
+    traffic_df = normalize_traffic_csv("traffic_timeseries.csv")
+    if not traffic_df.empty:
+        try:
+            traffic_df.to_csv(DATA_DIR / "normalized_traffic_preview.csv", index=False)
+            print(f"[INFO] Wrote normalized preview: normalized_traffic_preview.csv")
+        except Exception as e:
+            print(f"[WARN] Could not write normalized_traffic_preview.csv: {e}")
+        push_to_sql(traffic_df, table_name="traffic_timeseries", expected_cols=list(traffic_df.columns))
+
+    print("\n✅ Full fetch complete.")
+
+if __name__ == "__main__":
+    run_full_fetch()
