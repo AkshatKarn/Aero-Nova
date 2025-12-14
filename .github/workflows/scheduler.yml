@@ -1,26 +1,31 @@
 name: Hourly Live Data Scheduler
 
+# IMPORTANT: give Actions write permission so workflow can push updated CSVs
+permissions:
+  contents: write
+
 on:
   schedule:
-    - cron: "0 * * * *"  # runs every hour
-  workflow_dispatch:     # allow manual trigger
+    - cron: "0 * * * *"   # every hour at minute 0
+  workflow_dispatch:
 
 jobs:
   run-scheduler:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: '${{ secrets.DATABASE_URL }}'
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          persist-credentials: true   # needed for git push
+          fetch-depth: 0
+          # persist-credentials is true by default; keeps GITHUB_TOKEN available
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"      # 3.14 does NOT exist
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -29,12 +34,20 @@ jobs:
 
       - name: Run live scheduler
         run: |
-          python Pipeline/scheduler_runner.py
+          python scheduler_runner.py
 
       - name: Commit and push new data files
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Actions"
-          git add data/
-          git commit -m "Hourly auto-update from scheduler" || echo "No changes to commit"
-          git push
+          git config --local user.name "github-actions[bot]"
+
+          git add aqi_live_data.csv live_weather.csv traffic_timeseries.csv || true
+
+          git commit -m "Hourly auto-update from scheduler" || echo "no changes to commit"
+
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git
+
+          git push origin HEAD:main
