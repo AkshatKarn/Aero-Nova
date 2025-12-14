@@ -1,12 +1,11 @@
 name: Hourly Live Data Scheduler
 
-# IMPORTANT: give Actions write permission so workflow can push updated CSVs
 permissions:
   contents: write
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour at minute 0
+    - cron: "0 * * * *"     # every hour
   workflow_dispatch:
 
 jobs:
@@ -20,22 +19,33 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # persist-credentials is true by default; keeps GITHUB_TOKEN available
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.14"
+          python-version: "3.11"   # STABLE VERSION (3.14 DOES NOT EXIST)
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pandas requests sqlalchemy pymysql
 
-      - name: Run live scheduler
-        run: |
-          python scheduler_runner.py
+      # -----------------------------
+      # RUN LIVE DATA FETCHING
+      # -----------------------------
+      - name: Run full fetch scheduler
+        run: python full_fetch_scheduler.py
 
+      # -----------------------------
+      # RUN PREPROCESSING SCHEDULER
+      # (Runs scripts inside /preprocessing folder)
+      # -----------------------------
+      - name: Run preprocessing scheduler
+        run: python processing_scheduler.py
+
+      # -----------------------------
+      # COMMIT + PUSH NEW DATA FILES
+      # -----------------------------
       - name: Commit and push new data files
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -44,10 +54,12 @@ jobs:
           git config --local user.email "actions@github.com"
           git config --local user.name "github-actions[bot]"
 
-          git add aqi_live_data.csv live_weather.csv traffic_timeseries.csv || true
+          # ADD all data & processed files
+          git add data/*.csv || true
+          git add *.csv || true
+          git add preprocessing/*.csv || true
 
-          git commit -m "Hourly auto-update from scheduler" || echo "no changes to commit"
+          git commit -m "Hourly auto-update from scheduler" || echo "No changes to commit"
 
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git
-
           git push origin HEAD:main
