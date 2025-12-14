@@ -1,78 +1,54 @@
 # preprocess_aqi.py
-import pandas as pd
+"""
+Preprocess cleaned LIVE AQI data and save final master file.
+
+INPUT  : aeronova/data/live_processed/aqi_live_master.csv
+OUTPUT : aeronova/data/processed/aqi_master.csv
+"""
+
 from pathlib import Path
+import pandas as pd
 
-# BASE directory = project root (parent of /preprocessing folder)
-BASE = Path(__file__).resolve().parent.parent
+# --------------------------------------------------
+# PATH SETUP (FINAL)
+# --------------------------------------------------
+BASE = Path(__file__).resolve().parent.parent   # aeronova/
+DATA_DIR = BASE / "data"
+LIVE_DIR = DATA_DIR / "live_processed"
+PROCESSED_DIR = DATA_DIR / "processed"
 
-# Candidate dirs under BASE/data
-CANDIDATE_DIRS = [
-    BASE / "data",
-    BASE / "data" / "processed",
-    BASE / "data" / "live_processed",
-]
+PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-INFILES = ["aqi_historical_data.csv", "aqi_live_data.csv"]
-OUTFILE = "aqi_master.csv"
+INFILE = LIVE_DIR / "aqi_live_master.csv"
+OUTFILE = PROCESSED_DIR / "aqi_master.csv"
 
-# <-- Change output to data/processed (so it will appear under processed)
-OUT_DIR = BASE / "data" / "processed"
+# --------------------------------------------------
+# LOAD
+# --------------------------------------------------
+if not INFILE.exists():
+    raise FileNotFoundError(f"❌ AQI live master file not found: {INFILE}")
 
+print(f"[INFO] Loading cleaned AQI from: {INFILE}")
+df = pd.read_csv(INFILE)
+print("[INFO] Input shape:", df.shape)
 
-def find_file(fname):
-    """Return Path if found in any candidate dir, else None."""
-    for d in CANDIDATE_DIRS:
-        p = d / fname
-        if p.exists():
-            return p
-    return None
+# --------------------------------------------------
+# BASIC VALIDATION (OPTIONAL BUT SAFE)
+# --------------------------------------------------
+required_cols = {"timestamp"}
+missing = required_cols - set(df.columns)
+if missing:
+    raise ValueError(f"❌ Missing required columns in AQI data: {missing}")
 
+# --------------------------------------------------
+# (OPTIONAL) FINAL SORT / DEDUP
+# --------------------------------------------------
+df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+df = df.dropna(subset=["timestamp"])
+df = df.drop_duplicates().sort_values("timestamp").reset_index(drop=True)
 
-def load_csv_if_exists(path):
-    try:
-        return pd.read_csv(path)
-    except Exception as e:
-        print(f"[ERROR] Failed reading {path}: {e}")
-        return None
-
-
-def main():
-    found = {}
-    for fname in INFILES:
-        p = find_file(fname)
-        if p:
-            print(f"[INFO] Found {fname} at: {p}")
-            found[fname] = p
-        else:
-            print(f"[WARN] Missing {fname} — not found in candidate dirs.")
-
-    if not found:
-        print("[ERROR] No AQI files found. Exiting.")
-        return
-
-    dfs = []
-    for fname in INFILES:
-        p = found.get(fname)
-        if p:
-            df = load_csv_if_exists(p)
-            if df is not None:
-                df["source_file"] = p.name  # better: actual source filename
-                dfs.append(df)
-
-    if not dfs:
-        print("[ERROR] No valid dataframes loaded. Exiting.")
-        return
-
-    master = pd.concat(dfs, ignore_index=True, sort=False)
-
-    # Ensure output directory exists
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    out_path = OUT_DIR / OUTFILE
-    master.to_csv(out_path, index=False)
-
-    print(f"[OK] Wrote merged AQI master to: {out_path}")
-
-
-if __name__ == "__main__":
-    main()
+# --------------------------------------------------
+# SAVE
+# --------------------------------------------------
+df.to_csv(OUTFILE, index=False)
+print(f"[OK] Final AQI master saved → {OUTFILE}")
