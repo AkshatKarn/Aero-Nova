@@ -50,8 +50,11 @@ def simulate_time_series(duration_minutes=60, interval_seconds=60):
         time.sleep(interval_seconds)  # Wait before next fetch
 
     df = pd.DataFrame(all_data)
-    df.to_csv("traffic_timeseries.csv", index=False)
-    print("✅ Bulk historical-like traffic dataset saved as traffic_timeseries.csv")
+
+    # 🔥 Save to project root's data folder
+    df.to_csv("data/traffic_timeseries.csv", index=False)
+
+    print("✅ Bulk historical-like traffic dataset saved as data/traffic_timeseries.csv")
 
 if __name__ == "__main__":
     simulate_time_series(duration_minutes=30, interval_seconds=30)

@@ -1,0 +1,98 @@
+{
+  "name": "Premium Dark Glass",
+  "dataColors": [
+    "#E98B6A",
+    "#FFB86B",
+    "#6BD1FF",
+    "#46C77B",
+    "#9C7BFF",
+    "#FF6BAA",
+    "#FF9C6B",
+    "#7DD3C9",
+    "#FFD36B",
+    "#7A8CFF"
+  ],
+  "background": "#0F1115",
+  "foreground": "#E6E6E6",
+  "tableAccent": "#C76B4F",
+  "visualStyles": {
+    "*": {
+      "*": {
+        "color": [
+          {
+            "solid": {
+              "color": "#E6E6E6"
+            }
+          }
+        ],
+        "background": [
+          {
+            "solid": {
+              "color": "#15171A"
+            }
+          }
+        ]
+      }
+    },
+    "card": {
+      "*": {
+        "titleText": [
+          {
+            "color": {
+              "solid": {
+                "color": "#BEBEBE"
+              }
+            }
+          }
+        ],
+        "labelColor": [
+          {
+            "color": {
+              "solid": {
+                "color": "#E6E6E6"
+              }
+            }
+          }
+        ],
+        "background": [
+          {
+            "solid": {
+              "color": "#1F2226"
+            }
+          }
+        ]
+      }
+    },
+    "multiRowCard": {
+      "*": {
+        "background": [
+          {
+            "solid": {
+              "color": "#1F2226"
+            }
+          }
+        ],
+        "labelColor": [
+          {
+            "color": {
+              "solid": {
+                "color": "#E6E6E6"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "visualContainer": {
+      "*": {
+        "background": [
+          {
+            "solid": {
+              "color": "#111318"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

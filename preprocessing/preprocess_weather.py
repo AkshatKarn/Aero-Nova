@@ -1,121 +1,80 @@
 # preprocess_weather.py
-import pandas as pd
+"""
+Preprocess cleaned LIVE weather data and save final master file.
+
+INPUT  : aeronova/data/live_processed/weather_live_master.csv
+OUTPUT : aeronova/data/processed/weather_master.csv
+"""
+
 from pathlib import Path
+import pandas as pd
 
-# project base (parent of this script)
-BASE = Path(__file__).resolve().parent.parent
+# --------------------------------------------------
+# PATH SETUP (FINAL)
+# --------------------------------------------------
+BASE = Path(__file__).resolve().parent.parent   # aeronova/
+DATA_DIR = BASE / "data"
+LIVE_DIR = DATA_DIR / "live_processed"
+PROCESSED_DIR = DATA_DIR / "processed"
 
-# candidate dirs to search for source files
-CANDIDATE_DIRS = [
-    BASE / "data",
-    BASE / "data" / "processed",
-    BASE / "data" / "live_processed",
-]
+PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-# expected filenames (adjust if your filenames differ)
-FILES = ["historical_weather.csv", "live_weather.csv"]
-OUTFILE = "weather_master.csv"
+INFILE = LIVE_DIR / "weather_live_master.csv"
+OUTFILE = PROCESSED_DIR / "weather_master.csv"
 
-# output directory (kept under data/processed as requested)
-OUT_DIR = BASE / "data" / "processed"
+# --------------------------------------------------
+# LOAD
+# --------------------------------------------------
+if not INFILE.exists():
+    raise FileNotFoundError(f"❌ Weather live master file not found: {INFILE}")
 
+print(f"[INFO] Loading cleaned weather from: {INFILE}")
+df = pd.read_csv(INFILE, low_memory=False)
+print("[INFO] Input shape:", df.shape)
 
-def find_file(fname):
-    """Return Path if found in any candidate dir, else None."""
-    for d in CANDIDATE_DIRS:
-        p = d / fname
-        if p.exists():
-            return p
-    return None
+# --------------------------------------------------
+# BASIC VALIDATION
+# --------------------------------------------------
+required_cols = {"timestamp"}
+missing = required_cols - set(df.columns)
+if missing:
+    raise ValueError(f"❌ Missing required columns in weather data: {missing}")
 
+# --------------------------------------------------
+# TIMESTAMP NORMALIZATION (Power BI SAFE)
+# --------------------------------------------------
+df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+df = df.dropna(subset=["timestamp"])
 
-def safe_read_csv(path):
-    try:
-        return pd.read_csv(path)
-    except Exception as e:
-        print(f"[ERROR] Failed to read {path}: {e}")
-        return None
+# remove timezone if present
+try:
+    df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+except Exception:
+    pass
 
+# --------------------------------------------------
+# FINAL CLEANUP
+# --------------------------------------------------
+df = (
+    df.drop_duplicates()
+      .sort_values("timestamp")
+      .reset_index(drop=True)
+)
 
-def normalize_cols(df):
-    df = df.copy()
-    # use regex=False for literal replacements to avoid warnings
-    cols = (df.columns
-              .str.strip()
-              .str.replace(" ", "_", regex=False)
-              .str.replace("(", "", regex=False)
-              .str.replace(")", "", regex=False)
-              .str.lower())
-    df.columns = cols
-    return df
+# --------------------------------------------------
+# OPTIONAL: COLUMN SELECTION (UNCOMMENT IF NEEDED)
+# --------------------------------------------------
+# keep_cols = [
+#     "timestamp",
+#     "temperature",
+#     "humidity",
+#     "windspeed",
+#     "precipitation"
+# ]
+# df = df[[c for c in keep_cols if c in df.columns]]
 
-
-def parse_timestamp(df):
-    # convert any column that looks like timestamp/time to datetime
-    for c in df.columns:
-        if "timestamp" in c or ("time" in c and "timezone" not in c):
-            try:
-                df[c] = pd.to_datetime(df[c], errors="coerce")
-            except Exception:
-                # leave as-is if conversion fails
-                pass
-    return df
-
-
-def fill_missing(df):
-    num_cols = df.select_dtypes(include=["number"]).columns
-    if len(num_cols):
-        df[num_cols] = df[num_cols].fillna(df[num_cols].median())
-
-    cat_cols = df.select_dtypes(include=["object", "category"]).columns
-    for c in cat_cols:
-        if not df[c].mode().empty:
-            df[c] = df[c].fillna(df[c].mode()[0])
-        else:
-            df[c] = df[c].fillna("unknown")
-    return df
-
-
-def main():
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    found_any = False
-    dfs = []
-
-    for fname in FILES:
-        p = find_file(fname)
-        if not p:
-            print(f"[WARN] Missing {fname} — not found in candidate dirs.")
-            continue
-
-        print(f"[INFO] Found {fname} at {p}")
-        df = safe_read_csv(p)
-        if df is None:
-            print(f"[WARN] Skipping {p} due to read error.")
-            continue
-
-        df = normalize_cols(df)
-        df = parse_timestamp(df)
-        # optional: tag source file column to trace provenance
-        df["source_file"] = p.name
-        dfs.append(df)
-        found_any = True
-
-    if not found_any or not dfs:
-        print("[ERROR] No valid Weather files found. Exiting.")
-        return
-
-    combined = pd.concat(dfs, ignore_index=True, sort=False)
-    combined = combined.drop_duplicates().reset_index(drop=True)
-    combined = fill_missing(combined)
-
-    outpath = OUT_DIR / OUTFILE
-    try:
-        combined.to_csv(outpath, index=False)
-        print(f"[OK] Weather master saved -> {outpath} (rows: {len(combined)})")
-    except Exception as e:
-        print(f"[ERROR] Failed to write output {outpath}: {e}")
-
-
-if __name__ == "__main__":
-    main()
+# --------------------------------------------------
+# SAVE
+# --------------------------------------------------
+df.to_csv(OUTFILE, index=False)
+print(f"[OK] Final weather master saved → {OUTFILE}")
