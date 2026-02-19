@@ -66,10 +66,19 @@ st.subheader("🗺 Adjust Location (Drag Marker or Click Map)")
 
 m = folium.Map(location=map_center, zoom_start=14, control_scale=True)
 
-# Add multiple tile layers
-folium.TileLayer("cartodbpositron").add_to(m)
-folium.TileLayer("Stamen Terrain").add_to(m)
+# Add multiple tile layers (FIXED)
+folium.TileLayer("OpenStreetMap").add_to(m)
+
+folium.TileLayer(
+    tiles="Stamen Terrain",
+    attr="Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap."
+).add_to(m)
+
+folium.TileLayer("CartoDB positron").add_to(m)
+
 folium.LayerControl().add_to(m)
+
+
 
 # Draggable marker
 marker = folium.Marker(
