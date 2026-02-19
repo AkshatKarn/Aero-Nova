@@ -1,50 +1,105 @@
-# Python cache
+# ===============================
+# Python cache & compiled files
+# ===============================
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
+# ===============================
 # Virtual environments
+# ===============================
 venv/
 .venv/
 env/
+ENV/
 
-# Jupyter Notebook checkpoints (if any collaborator uses notebooks)
+# ===============================
+# Environment variables (CRITICAL)
+# ===============================
+.env
+.env.*
+
+# ===============================
+# Jupyter Notebook checkpoints
+# ===============================
 .ipynb_checkpoints/
 
+# ===============================
+# Streamlit cache
+# ===============================
+.streamlit/
+
+# ===============================
 # Data files (raw/processed datasets)
+# ===============================
 data/raw/*
 data/processed/*
-!data/README.md   # keep placeholder
+!data/README.md
 
-# Results (generated outputs, graphs, reports)
+# If you store DB later
+database/*.db
+database/*.sqlite
+
+# ===============================
+# Results / outputs
+# ===============================
 results/*.png
 results/*.jpg
+results/*.jpeg
 results/*.pdf
 results/*.html
 results/*.csv
-!results/README.md  # keep placeholder
+!results/README.md
 
+# ===============================
 # Logs / temporary files
+# ===============================
 *.log
 *.tmp
+*.bak
+*.swp
 
-# Model artifacts (pickles, saved models, cache)
+# ===============================
+# Model artifacts
+# ===============================
 models/*.pkl
 models/*.joblib
 models/*.h5
 models/*.pt
 models/*.onnx
+saved_models/*
 !models/README.md
 
-# Reports (if auto-generated)
+# ===============================
+# Reports
+# ===============================
 reports/*.pdf
 reports/*.docx
 reports/*.html
 
+# ===============================
 # IDE/editor settings
+# ===============================
 .vscode/
 .idea/
 
+# ===============================
 # OS system files
+# ===============================
 .DS_Store
 Thumbs.db
+
+# ===============================
+# Coverage & Testing
+# ===============================
+.coverage
+htmlcov/
+.pytest_cache/
+
+# ===============================
+# Build files
+# ===============================
+build/
+dist/
+*.egg-info/
