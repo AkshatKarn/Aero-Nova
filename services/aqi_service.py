@@ -41,3 +41,25 @@ def get_live_aqi(lat: float, lon: float):
 
     except requests.RequestException:
         return None
+
+def get_user_location_by_ip():
+    """
+    Detect user location using IP address.
+    Returns latitude, longitude and city name.
+    """
+
+    try:
+        response = requests.get("http://ip-api.com/json/", timeout=5)
+        data = response.json()
+
+        if data.get("status") == "success":
+            return {
+                "latitude": data.get("lat"),
+                "longitude": data.get("lon"),
+                "city": data.get("city")
+            }
+        else:
+            return None
+
+    except requests.RequestException:
+        return None
