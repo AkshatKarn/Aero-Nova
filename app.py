@@ -119,7 +119,12 @@ if st.button("Get AQI for This Location"):
     st.divider()
 
     col1, col2, col3 = st.columns(3)
+    col4, col5, col6 = st.columns(3)
 
     col1.metric("PM2.5", data.get("pm25"))
     col2.metric("PM10", data.get("pm10"))
     col3.metric("NO2", data.get("no2"))
+
+    col4.metric("O3", data.get("o3"))
+    col5.metric("SO2", data.get("so2"))
+    col6.metric("CO", data.get("co"))
