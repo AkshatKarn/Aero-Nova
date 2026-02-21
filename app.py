@@ -1,6 +1,5 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
+import pydeck as pdk
 from geopy.geocoders import Nominatim
 
 from services.aqi_service import get_live_aqi, get_user_location_by_ip
@@ -54,68 +53,48 @@ if address_input:
 # ---------------------------------------------------
 
 if search_lat and search_lon:
-    map_center = [search_lat, search_lon]
-else:
-    map_center = [default_lat, default_lon]
-
-# ---------------------------------------------------
-# STEP 4: Render Interactive Map
-# ---------------------------------------------------
-
-st.subheader("🗺 Adjust Location (Drag Marker or Click Map)")
-
-m = folium.Map(location=map_center, zoom_start=14, control_scale=True)
-
-# Add multiple tile layers (FIXED)
-folium.TileLayer("OpenStreetMap").add_to(m)
-
-folium.TileLayer(
-    tiles="Stamen Terrain",
-    attr="Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap."
-).add_to(m)
-
-folium.TileLayer("CartoDB positron").add_to(m)
-
-folium.LayerControl().add_to(m)
-
-
-
-# Draggable marker
-marker = folium.Marker(
-    location=map_center,
-    draggable=True
-)
-marker.add_to(m)
-
-map_data = st_folium(m, width=1000, height=500)
-
-# ---------------------------------------------------
-# STEP 5: Capture Final Location
-# ---------------------------------------------------
-
-if search_lat and search_lon:
     final_lat = search_lat
     final_lon = search_lon
-
-elif map_data and map_data.get("last_clicked"):
-    final_lat = map_data["last_clicked"]["lat"]
-    final_lon = map_data["last_clicked"]["lng"]
-
-elif map_data and map_data.get("last_object_clicked"):
-    final_lat = map_data["last_object_clicked"]["lat"]
-    final_lon = map_data["last_object_clicked"]["lng"]
-
 else:
     final_lat = default_lat
     final_lon = default_lon
 
+# ---------------------------------------------------
+# STEP 4: Render Pydeck Map
+# ---------------------------------------------------
+
+st.subheader("🗺 Location Preview")
+
+view_state = pdk.ViewState(
+    latitude=final_lat,
+    longitude=final_lon,
+    zoom=16,
+    pitch=0,
+)
+
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    data=[{"lat": final_lat, "lon": final_lon}],
+    get_position="[lon, lat]",
+    get_radius=150,
+    get_fill_color=[255, 0, 0],
+)
+
+deck = pdk.Deck(
+    map_style="road",
+    initial_view_state=view_state,
+    layers=[layer],
+)
+
+st.pydeck_chart(deck)
+
 st.info(f"📍 Selected Coordinates: {final_lat:.5f}, {final_lon:.5f}")
 
 # ---------------------------------------------------
-# STEP 6: Fetch AQI
+# STEP 5: Fetch AQI
 # ---------------------------------------------------
 
-if st.button("Get AQI for Selected Location"):
+if st.button("Get AQI for This Location"):
 
     with st.spinner("Fetching live AQI..."):
         data = get_live_aqi(final_lat, final_lon)

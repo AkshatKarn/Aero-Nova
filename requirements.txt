@@ -1,8 +1,10 @@
 streamlit
-joblib
+requests
+python-dotenv
+geopy
+pydeck
 pandas
 numpy
-scikit-learn
 plotly
-python-dotenv
-requests
+scikit-learn
+joblib
