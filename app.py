@@ -60,36 +60,35 @@ else:
     final_lon = default_lon
 
 # ---------------------------------------------------
-# STEP 4: Render Pydeck Map
+# STEP 4: Optional Map Adjustment (Collapsed)
 # ---------------------------------------------------
 
-st.subheader("🗺 Location Preview")
+with st.expander("🗺 Adjust Location Manually (Optional)"):
 
-view_state = pdk.ViewState(
-    latitude=final_lat,
-    longitude=final_lon,
-    zoom=16,
-    pitch=0,
-)
+    view_state = pdk.ViewState(
+        latitude=final_lat,
+        longitude=final_lon,
+        zoom=16,
+        pitch=0,
+    )
 
-layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=[{"lat": final_lat, "lon": final_lon}],
-    get_position="[lon, lat]",
-    get_radius=150,
-    get_fill_color=[255, 0, 0],
-)
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=[{"lat": final_lat, "lon": final_lon}],
+        get_position="[lon, lat]",
+        get_radius=150,
+        get_fill_color=[255, 0, 0],
+    )
 
-deck = pdk.Deck(
-    map_style="road",
-    initial_view_state=view_state,
-    layers=[layer],
-)
+    deck = pdk.Deck(
+        map_style="road",
+        initial_view_state=view_state,
+        layers=[layer],
+    )
 
-st.pydeck_chart(deck)
+    st.pydeck_chart(deck)
 
-st.info(f"📍 Selected Coordinates: {final_lat:.5f}, {final_lon:.5f}")
-
+    st.info(f"📍 Selected Coordinates: {final_lat:.5f}, {final_lon:.5f}")
 # ---------------------------------------------------
 # STEP 5: Fetch AQI
 # ---------------------------------------------------
