@@ -3,6 +3,7 @@ import pydeck as pdk
 from geopy.geocoders import Nominatim
 
 from services.aqi_service import get_live_aqi, get_user_location_by_ip
+from services.db_service import save_aqi_data
 from utils.aqi_category import get_category_with_color
 
 st.set_page_config(page_title="Aero-Nova | Live AQI", layout="wide")
@@ -92,8 +93,7 @@ with st.expander("🗺 Adjust Location Manually (Optional)"):
 # ---------------------------------------------------
 # STEP 5: Fetch AQI
 # ---------------------------------------------------
-
-if st.button("Get AQI for This Location"):
+if st.button("Get AQI for Selected Location"):
 
     with st.spinner("Fetching live AQI..."):
         data = get_live_aqi(final_lat, final_lon)
@@ -102,7 +102,16 @@ if st.button("Get AQI for This Location"):
         st.error("Failed to fetch AQI.")
         st.stop()
 
-    aqi_value = data["aqi"]
+    # 🔥 SAVE TO DATABASE
+    save_aqi_data(data, final_lat, final_lon)
+
+    # Safe extraction
+    aqi_value = data.get("aqi")
+
+    if aqi_value is None:
+        st.error("AQI value not available.")
+        st.stop()
+
     category, color = get_category_with_color(aqi_value)
 
     st.markdown(
@@ -120,10 +129,10 @@ if st.button("Get AQI for This Location"):
     col1, col2, col3 = st.columns(3)
     col4, col5, col6 = st.columns(3)
 
-    col1.metric("PM2.5", data.get("pm25"))
-    col2.metric("PM10", data.get("pm10"))
-    col3.metric("NO2", data.get("no2"))
+    col1.metric("PM2.5", data.get("pm25") or "N/A")
+    col2.metric("PM10", data.get("pm10") or "N/A")
+    col3.metric("NO2", data.get("no2") or "N/A")
 
-    col4.metric("O3", data.get("o3"))
-    col5.metric("SO2", data.get("so2"))
-    col6.metric("CO", data.get("co"))
+    col4.metric("O3", data.get("o3") or "N/A")
+    col5.metric("SO2", data.get("so2") or "N/A")
+    col6.metric("CO", data.get("co") or "N/A")
