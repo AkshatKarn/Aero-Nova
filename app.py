@@ -17,6 +17,7 @@ from services.aqi_service import get_user_location_by_ip
 from services.db_service import save_aqi_data
 from utils.aqi_category import get_category_with_color
 from utils.indian_aqi_calculator import calculate_indian_aqi
+from utils.forecast_engine import forecast_next_24
 
 st.set_page_config(page_title="Aero-Nova | Live AQI", layout="wide")
 
@@ -68,7 +69,7 @@ if address_input and st.session_state.get("last_searched") != address_input:
     except (GeocoderTimedOut, GeocoderUnavailable):
         st.warning("⚠ Location service temporarily unavailable.")
 
-        
+
 # ---------------------------------------------------
 # STEP 3: Final Coordinates
 # ---------------------------------------------------
@@ -188,36 +189,130 @@ if st.button("Get AQI for Selected Location"):
     col6.metric("CO", raw_data.get("co") or "N/A")
 
     # -------- Historical Trend --------
-    st.subheader("📈 Last 24 Hours PM2.5 Trend")
+st.subheader("📈 Last 24 Hours Trend")
 
-    history = get_historical_pollution_data(final_lat, final_lon)
+history = get_historical_pollution_data(final_lat, final_lon)
 
-    if history:
-        timestamps = []
-        pm25_values = []
+if history:
+
+    timestamps = []
+    pm25_values = []
+
+    for entry in history:
+        dt = datetime.datetime.fromtimestamp(entry["dt"])
+        pm25 = entry["components"]["pm2_5"]
+
+        timestamps.append(dt)
+        pm25_values.append(pm25)
+
+    # -------------------------
+    # Historical Graph
+    # -------------------------
+    fig_hist = go.Figure()
+
+    fig_hist.add_trace(go.Scatter(
+        x=timestamps,
+        y=pm25_values,
+        mode='lines+markers',
+        name='PM2.5 Historical'
+    ))
+
+    fig_hist.update_layout(
+        xaxis_title="Time",
+        yaxis_title="PM2.5 (µg/m³)",
+        template="plotly_dark"
+    )
+
+    st.plotly_chart(fig_hist, use_container_width=True)
+
+    # -------------------------
+    # Forecast Section
+    # -------------------------
+    st.subheader("🔮 24-Hour Forecast")
+
+    forecast_param = st.selectbox(
+        "Select Parameter for Forecast",
+        ["AQI", "pm25", "pm10", "no2", "o3"],
+        index=0
+    )
+
+    # -------------------------
+    # Prepare Series
+    # -------------------------
+    if forecast_param == "AQI":
+        param_series = []
 
         for entry in history:
-            dt = datetime.datetime.fromtimestamp(entry["dt"])
-            pm25 = entry["components"]["pm2_5"]
-            timestamps.append(dt)
-            pm25_values.append(pm25)
+            pm25_val = entry["components"].get("pm2_5")
 
-        fig = go.Figure()
+            if pm25_val is not None:
+                aqi_val = calculate_indian_aqi({
+                    "pm25": pm25_val,
+                    "pm10": entry["components"].get("pm10"),
+                    "no2": entry["components"].get("no2"),
+                    "o3": entry["components"].get("o3"),
+                    "so2": entry["components"].get("so2"),
+                    "co": entry["components"].get("co"),
+                })[0]
 
-        fig.add_trace(go.Scatter(
+                param_series.append(aqi_val)
+            else:
+                param_series.append(None)
+
+        model_key = "aqi"
+
+    else:
+        param_series = [
+            entry["components"].get(forecast_param)
+            for entry in history
+        ]
+
+        model_key = forecast_param
+
+    # -------------------------
+    # Forecast Calculation
+    # -------------------------
+    forecast = forecast_next_24(param_series, model_key)
+
+    if forecast:
+
+        last_time = timestamps[-1]
+        future_times = [
+            last_time + datetime.timedelta(hours=i+1)
+            for i in range(24)
+        ]
+
+        fig_forecast = go.Figure()
+
+        # Historical
+        fig_forecast.add_trace(go.Scatter(
             x=timestamps,
-            y=pm25_values,
-            mode='lines+markers',
-            name='PM2.5'
+            y=param_series,
+            mode='lines',
+            name='Historical'
         ))
 
-        fig.update_layout(
+        # Forecast
+        fig_forecast.add_trace(go.Scatter(
+            x=future_times,
+            y=forecast,
+            mode='lines',
+            name='Forecast',
+            line=dict(dash='dash')
+        ))
+
+        fig_forecast.update_layout(
             xaxis_title="Time",
-            yaxis_title="PM2.5 (µg/m³)",
+            yaxis_title="AQI" if forecast_param == "AQI" else forecast_param.upper(),
             template="plotly_dark"
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_forecast, use_container_width=True)
+
+        st.caption("Solid line = Historical | Dashed line = Forecast")
 
     else:
-        st.warning("Unable to fetch historical data.")
+        st.warning("Not enough data available for forecasting.")
+
+else:
+    st.warning("Unable to fetch historical data.")
